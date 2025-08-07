@@ -1,42 +1,25 @@
-Speeduino to CAN Interface for BMW E39/E46 Instrument Clusters
-This project aims to read real-time data from the Speeduino EFI system using a serial connection and convert that data into CAN messages suitable for BMW E39/E46 instrument clusters. The implementation is designed for the ESP32 WROOM32D microcontroller paired with an MCP2551 CAN transceiver.
+# Speeduino to CAN Interface for BMW E39/E46 Instrument Clusters
 
-Overview
-The code is a modified version of an original project created by pazi88 and adapted by krided for the ESP32 platform. It facilitates communication between the Speeduino EFI system and BMW's CAN bus, allowing for the display of engine parameters such as RPM, coolant temperature, and fuel consumption on the vehicle's instrument cluster.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Features
-Real-time Data Acquisition: The code requests and processes real-time data from the Speeduino EFI system.
-CAN Messaging: Converts Speeduino data into CAN messages compatible with BMW E39/E46 clusters.
-Data Handling: Implements error checking and data validation to ensure reliable communication.
-Configurable Update Rates: Allows for adjustable rates for data requests and CAN message sending.
-Hardware Requirements
-ESP32 WROOM32D: The main microcontroller for handling data processing and communication.
-MCP2551: CAN transceiver for interfacing with the vehicle's CAN bus.
-Speeduino EFI: The engine management system providing real-time data.
-Software Requirements
-Arduino IDE: The development environment used to compile and upload the code to the ESP32.
-Libraries: The code utilizes the CAN and Ticker libraries for CAN communication and timed operations.
-Code Structure
-Pin Configuration: Defines the pins used for serial communication and CAN bus.
-Data Structures: Structures to hold CAN messages and Speeduino status data.
-Functions:
-requestData(): Requests real-time data from Speeduino.
-SendData(): Sends CAN messages to the instrument cluster.
-readCanMessage(): Reads incoming CAN messages.
-processData(): Processes and converts Speeduino data for CAN transmission.
-HandleA() and HandleR(): Handle incoming messages from Speeduino.
-Usage
-Setup: Connect the ESP32 and MCP2551 to the Speeduino EFI and the BMW CAN bus.
-Upload Code: Use the Arduino IDE to upload the code to the ESP32.
-Monitor Output: Use the Serial Monitor to view debug information and ensure proper operation.
-Disclaimer
-This software is provided "as is", without warranty of any kind. The authors are not liable for any damages or issues arising from the use of this code. Use at your own risk.
+This project reads real-time data from Speeduino EFI system via UART and converts it to BMW-specific CAN messages for E39/E46 instrument clusters.
 
-Acknowledgments
-Original code by pazi88.
-Modifications by krided for ESP32 compatibility.
-Community contributions and support.
-License
-This project is licensed under the MIT License. See the LICENSE file for more details.
+## Features
+- Real-time RPM, coolant temp, TPS, fuel consumption data
+- Plug-and-play with Speeduino via Serial (115200 baud)
+- CAN bus communication @ 500kbps
+- ESP32 WROOM32D & MCP2551 hardware support
 
-Feel free to modify this description to better fit your project's needs or to add any additional information that may be relevant!
+## Installation
+1. Use Arduino IDE to flash ESP32
+2. Connect:
+   - Serial RX/TX to Speeduino
+   - CAN H/L to vehicle CAN bus
+3. Configure Speeduino to output realtime data
+
+```c++
+// Example connection:
+#define SERIAL2_RX_PIN 16   // ESP32 UART2 RX
+#define SERIAL2_TX_PIN 17   // ESP32 UART2 TX
+#define CAN_RX_PIN     4    // MCP2551 RX
+#define CAN_TX_PIN     5    // MCP2551 TX
