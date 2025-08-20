@@ -13,7 +13,7 @@ This project reads real-time data from Speeduino EFI system via UART and convert
 
 
 ## Features
-- Real-time RPM, coolant temp, TPS, fuel consumption data
+- Real-time RPM, coolant temp, TPS, fuel consumption and other data from speeduino
 - Plug-and-play with Speeduino via Serial (115200 baud)
 - CAN bus communication @ 500kbps
 - Future updates and full compatibility with my future add-ons
