@@ -21,9 +21,11 @@ This project reads real-time data from Speeduino EFI system via UART and convert
 ## Installation
 1. Use Arduino IDE to flash ESP32
 2. Connect:
-   - Serial RX/TX wia logic level converter/voltage divider to arduino mega/speeduino pin of serial3 (tx3 - 14 /rx3 - 15) - <img width="2571" height="2572" alt="image" src="https://github.com/user-attachments/assets/038b7550-2ef1-4453-8c64-1f61b977c0ef" />
-   - CAN H/L to vehicle CAN bus
-3. Configure Speeduino to output realtime data
+   - Serial RX/TX pins from ur config wia logic level converter/voltage divider to arduino mega/speeduino pin of serial3 (tx3 - 14 /rx3 - 15) - <img width="2571" height="2572" alt="image" src="https://github.com/user-attachments/assets/038b7550-2ef1-4453-8c64-1f61b977c0ef" />
+   - Connect esp32 CAN_RX/TX pins to MCP2551
+   - CAN H/L from to vehicle CAN bus
+   - Get powersupply to all modules - esp,mcp
+3. Get fun of ur speeduino project :D
 
 ```c++
 // Example connection:
