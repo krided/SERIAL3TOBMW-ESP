@@ -1,6 +1,6 @@
 // This code is meant to read real time data from Speeduino EFI using serial3 connection in speeduino and convert that to CAN messages for BMW e39/e46 instrument clusters
 // The hardware that the code is meant to be used is ESP32 WROOM32D with MCP2551 transceiver.
-// Created by pazi88 for stm32 moded by krided to work at esp32 and there is no guarantee at all that any of this will work.
+// Created by pazi88 for stm32 recoded by krided to work at esp32 and there is no guarantee at all that any of this will work.
 // Use arduino IDE 
 
 //THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -10,6 +10,7 @@
 //LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 //OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //THE SOFTWARE.
+
 #include <Arduino.h>
 #include <CAN.h>
 #include <Ticker.h>
