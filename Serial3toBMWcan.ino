@@ -1,6 +1,6 @@
 // This code is meant to read real time data from Speeduino EFI using serial3 connection in speeduino and convert that to CAN messages for BMW e39/e46 instrument clusters
 // The hardware that the code is meant to be used is ESP32 WROOM32D with MCP2551 transceiver.
-// Created by pazi88 for stm32 recoded by krided to work at esp32 and there is no guarantee at all that any of this will work.
+// Created by pazi88 for stm32 moded by krided to work at esp32 and there is no guarantee at all that any of this will work.
 // Use arduino IDE 
 
 //THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <CAN.h>
 #include <Ticker.h>
+
 Ticker requestTicker;
 Ticker sendTicker;
 // ====== PIN CONFIGURATION ======
@@ -22,6 +23,11 @@ Ticker sendTicker;
 #define CAN_RX_PIN     4    // ESP32 CAN RX pin (change as needed)
 #define CAN_TX_PIN     5    // ESP32 CAN TX pin (change as needed)
 // ===============================
+// Temperature thresholds for overheat light behavior
+#define HOT_TEMP_BLINK 100    // Temp of blinking hot light (e.g. 100°C)
+#define HOT_TEMP_SOLID 120    // Temp of solid hot light (e.g. 120°C)
+#define BLINKING 1            // Set to 1 to enable blinking behavior, 0 for solid light only
+// ==============================
 //Bitsetting macros
 #define BIT_SET(a,b) ((a) |= (1U<<(b)))
 #define BIT_CLEAR(a,b) ((a) &= ~(1U<<(b)))
@@ -181,6 +187,16 @@ void SendData()   // Send can messages in 50Hz phase from timer interrupt. This 
   else{
     CAN_msg_MPG_CEL.buf[0]= 0x00;  // CEL off
   }
+
+  if (currentStatus.spark == 5) {
+  handleEMLLamp();
+  }
+
+  //To do: Handle low battery warning
+  //if (currentStatus.battery10 < 100) {
+  //  // Handle low battery warning
+  //}
+
   // This updates the fuel consumption counter. It's how much fuel is injected to engine, so PW and RPM affects it.
   updatePW = updatePW + ( currentStatus.PW1 * (currentStatus.RPM/10) );
   // We adjust the counter reading so that we get correct values sent to cluster. PW_ADJUST is just trial and error value. 
@@ -243,6 +259,88 @@ void SendData()   // Send can messages in 50Hz phase from timer interrupt. This 
     }
   }
 }
+
+// Funkcja do obsługi lampki CEL na 3 sekundy
+void handleCelLamp() {
+  static bool celActive = false;
+  static uint32_t celStartTime = 0;
+
+  if (!celActive) {
+    // Wywołaj, aby zapalić lampkę
+    celActive = true;
+    celStartTime = millis();
+    CAN_msg_MPG_CEL.buf[0] = 0x02; // zapal lampkę
+  } else {
+    // Sprawdzaj w pętli, czy minęły 3 sekundy
+    if (millis() - celStartTime >= 3000) {
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // zgaś lampkę
+      celActive = false;
+    }
+  }
+}
+
+void handleCelELMLamp() {
+  static bool celActive = false;
+  static uint32_t celStartTime = 0;
+
+  if (!celActive) {
+    // Wywołaj, aby zapalić lampkę
+    celActive = true;
+    celStartTime = millis();
+    CAN_msg_MPG_CEL.buf[0] = 0x12; // zapal lampkę
+  } else {
+    // Sprawdzaj w pętli, czy minęły 3 sekundy
+    if (millis() - celStartTime >= 3000) {
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // zgaś lampkę
+      celActive = false;
+    }
+  }
+}
+
+void handleEMLLamp() {
+  static bool celActive = false;
+  static uint32_t celStartTime = 0;
+
+  if (!celActive) {
+    // Wywołaj, aby zapalić lampkę
+    celActive = true;
+    celStartTime = millis();
+    CAN_msg_MPG_CEL.buf[0] = 0x10; // zapal lampkę
+  } else {
+    // Sprawdzaj w pętli, czy minęły 3 sekundy
+    if (millis() - celStartTime >= 3000) {
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // zgaś lampkę
+      celActive = false;
+    }
+  }
+}
+
+
+void handleHotBlink(uint8_t temp) {
+  static uint32_t lastBlink = 0;
+  static bool lampOn = false;
+
+    if (temp >= HOT_TEMP_SOLID) {
+      tempLight = 0x8; // light on solid
+      return;
+    }
+    if (BLINKING == 1)
+    {
+      if (temp >= HOT_TEMP_BLINK) {
+      // If higher temp, the light blinks more frequently (e.g., every 1000ms at 100°C, every 200ms at 119°C)
+      uint16_t interval = map(temp, HOT_TEMP_BLINK, HOT_TEMP_SOLID-1, 1000, 200);
+      if (millis() - lastBlink > interval) {
+        lampOn = !lampOn;
+        tempLight = lampOn ? 0x8 : 0x0;
+        lastBlink = millis();
+      }
+    }
+    else {
+      tempLight = 0x0; // off
+    }
+  }
+}
+
 
 void setup(){
   Serial2.begin(115200, SERIAL_8N1, SERIAL2_RX_PIN, SERIAL2_TX_PIN); // RX2=16, TX2=17 (change pins if needed)
@@ -313,14 +411,13 @@ void setup(){
   requestTicker.attach(1.0/SerialUpdateRate, requestData);
   sendTicker.attach(1.0/ClusterUpdateRate, SendData);
 
-  Serial2.println ("Version date: 8.5.2025"); // To see from debug serial when is used code created.
-  doRequest = true; // all set. Start requesting data from speeduino
+  Serial2.println ("Version date: 30.08.2025"); 
+  doRequest = true; 
 
   rRequestCounter = SerialUpdateRate;
 }
 
 void readCanMessage() {
-  // ESP32 CAN library does not support filters in the same way, so just read all messages
   if (CAN.parsePacket()) {
     CAN_inMsg.id = CAN.packetId();
     CAN_inMsg.len = CAN.packetDlc();
@@ -500,13 +597,7 @@ void processData(){   // necessary conversion for the data before sending to CAN
   if (currentStatus.CLT < 182 && data_error == false)  // 142 degrees Celcius is the hottest temp that fits to the conversion. 
   {
     CLT = (currentStatus.CLT -40)*4/3+64;  // CLT conversion factor for e46/e39 cluster
-    if (currentStatus.CLT > 160) {
-      tempLight = 0x8;  // turn on engine temp warning light after 120 degrees Celcius
-    }
-    else
-    {
-      tempLight = 0x0;  // turn engine temp warning light off
-    }
+    handleHotBlink(currentStatus.CLT);
   }
   else
   {
