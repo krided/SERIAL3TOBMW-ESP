@@ -27,7 +27,6 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 - Full custom real-time monitoring: RPM, coolant temp, TPS, fuel level, oil temp, ambient temp, AFR, and more. via site.
 - More warings like the temperature.
 - Wireless inputs to speeduino (Reving up, etc.)
--
 
 ---
 
