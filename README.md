@@ -1,7 +1,9 @@
 # Speeduino to CAN Interface for BMW E39/E46 Instrument Clusters
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?&logo=buy-me-a-coffee&logoColor=black)](https://buycoffee.to/krided)
+
 This project reads real-time data from the **Speeduino EFI system** via UART and converts it into BMW-specific CAN messages for **E39/E46 instrument clusters**. It’s designed for ESP32 WROOM32D and MCP2551 transceiver, with optional web/Bluetooth dashboard support.
 
 ---
