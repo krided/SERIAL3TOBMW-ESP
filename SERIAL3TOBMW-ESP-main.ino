@@ -1,22 +1,36 @@
-// This code is meant to read real time data from Speeduino EFI using serial3 connection in speeduino and convert that to CAN messages for BMW e39/e46 instrument clusters
-// The hardware that the code is meant to be used is ESP32 WROOM32D with MCP2551 transceiver.
-// Created by pazi88 for stm32 moded by krided to work at esp32 and there is no guarantee at all that any of this will work.
-// Use arduino IDE 
+/*
+  BMW E39/E46 CAN Bridge & Dashboard for ESP32 WROOM32D + MCP2551
+  ----------------------------------------------------------------
 
-//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-//IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-//FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-//AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-//LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-//OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-//THE SOFTWARE.
+  This project is an ESP32-based solution that reads real-time data from
+  a Speeduino EFI system via Serial3 and converts it into CAN messages 
+  compatible with BMW E39/E46 instrument clusters. It also provides a
+  customizable dashboard, supporting Bluetooth telemetry for mobile devices.
 
-"
+  Portions of this code are derived from work by the user "pazi88", who
+  originally developed the Speeduino-to-CAN BMW bridge for STM32. Their contributions
+  have been adapted and extended in this project, including new features such as:
+    - Bluetooth data streaming
+    - Configurable dashboard items
+    - Flexible data mapping for engine parameters
+    - Optimized update rates to reduce unnecessary load
+    - And a lot more improvements
+
+  This project is provided "as-is" and comes without any warranty. The author
+  assumes no responsibility for any damage, misbehavior, or data inaccuracies
+  resulting from its use.
+
+  Note: This is a collaborative adaptation. While acknowledging the original
+  work, substantial modifications and enhancements have been implemented
+  to fit ESP32 hardware and additional functionality.
+*/
+
+/*
 Libs used:
 [CAN@0.3.1] - Arduino CAN library for ESP32
 [Ticker@3.3.0] - ESP32 Ticker library
 [BluetoothSerial@3.3.0] - Bluetooth Serial library for ESP32
-"
+*/
 
 // ========== Library ===========
 #include "config.h" // configuration file
