@@ -173,8 +173,8 @@ Ticker sendTicker;
 
 // Request data from speeduino at defined rate
 void requestData() {
-  if (doRequest){
-    Serial2.write("A"); // Send A to request real time data
+  if (doRequest == true){
+    Serial1.write("A"); // Send A to request real time data
     doRequest = false;
   }
 }
@@ -372,7 +372,7 @@ void handleHotBlink(uint8_t temp) {
 
 // Main setup function
 void setup(){
-  Serial2.begin(SERIAL_BAUDRATE, SERIAL_8N1, SERIAL2_RX_PIN, SERIAL2_TX_PIN); // RX2=16, TX2=17 (change pins if needed)
+  Serial1.begin(SERIAL_BAUDRATE, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN); // RX2=16, TX2=17 (change pins if needed)
   Serial.begin(SERIAL_DEBUG_BAUDRATE); // for debugging
   
   doRequest = false; // to avoid sending A command before speeduino is ready
@@ -442,8 +442,8 @@ void setup(){
   acBitfield2 = 0;
   eFanBitfield = 0;
 
-  requestTicker.attach(1.0/SerialUpdateRate, requestData);
-  sendTicker.attach(1.0/ClusterUpdateRate, SendData);
+  requestTicker.attach_ms(1000/SerialUpdateRate, requestData);
+  sendTicker.attach(1000/ClusterUpdateRate, SendData);
 
   Serial.println ("Version date: 30.08.2025"); 
   doRequest = true; 
@@ -503,50 +503,50 @@ void readCanMessage() {
 
 // This function sends the requested data back to speeduino when it requests it
 void SendDataToSpeeduino(){
-  Serial2.write("G");                      // reply "G" cmd
+  Serial1.write("G");                      // reply "G" cmd
   switch (CanAddress)
   {
     case 0x613:  // Odometer and fuel level
-      Serial2.write(1);                        // send 1 to confirm cmd received and valid
-      Serial2.write(canin_channel);            // confirms the destination channel
-      Serial2.write(odometerLSB);              // write back the requested data
-      Serial2.write(odometerMSB);
-      Serial2.write(FuelLevel);
-      Serial2.write(lowByte(runningClock));
-      Serial2.write(highByte(runningClock));
-      for (int i=0; i<3; i++) { Serial2.write(0); }                // Rest will be zero
+      Serial1.write(1);                        // send 1 to confirm cmd received and valid
+      Serial1.write(canin_channel);            // confirms the destination channel
+      Serial1.write(odometerLSB);              // write back the requested data
+      Serial1.write(odometerMSB);
+      Serial1.write(FuelLevel);
+      Serial1.write(lowByte(runningClock));
+      Serial1.write(highByte(runningClock));
+      for (int i=0; i<3; i++) { Serial1.write(0); }                // Rest will be zero
     break;
     case 0x615:  // Ambient temp
-      Serial2.write(1);                        // send 1 to confirm cmd received and valid
-      Serial2.write(canin_channel);            // confirms the destination channel
-      for (int i=0; i<3; i++) { Serial2.write(0); }
-      Serial2.write(ambientTemp);              // write back the requested data
-        for (int i=0; i<4; i++) { Serial2.write(0); }
+      Serial1.write(1);                        // send 1 to confirm cmd received and valid
+      Serial1.write(canin_channel);            // confirms the destination channel
+      for (int i=0; i<3; i++) { Serial1.write(0); }
+      Serial1.write(ambientTemp);              // write back the requested data
+        for (int i=0; i<4; i++) { Serial1.write(0); }
     break;
     case  0x153:  // VSS
-      Serial2.write(1);                        // send 1 to confirm cmd received and valid
-      Serial2.write(canin_channel);            // confirms the destination channel
-      Serial2.write(0);
-      Serial2.write(lowByte(VSS));
-      Serial2.write(highByte(VSS));
-      for (int i=0; i<5; i++) { Serial2.write(0); }
+      Serial1.write(1);                        // send 1 to confirm cmd received and valid
+      Serial1.write(canin_channel);            // confirms the destination channel
+      Serial1.write(0);
+      Serial1.write(lowByte(VSS));
+      Serial1.write(highByte(VSS));
+      for (int i=0; i<5; i++) { Serial1.write(0); }
     break;
     case  0x1F0:  // VSS for each invidual wheel
-      Serial2.write(1);                        // send 1 to confirm cmd received and valid
-      Serial2.write(canin_channel);            // confirms the destination channel               //write back the requested data
-      Serial2.write(lowByte(VSS1));
-      Serial2.write(highByte(VSS1));
-      Serial2.write(lowByte(VSS2));
-      Serial2.write(highByte(VSS2));
-      Serial2.write(lowByte(VSS3));
-      Serial2.write(highByte(VSS3));
-      Serial2.write(lowByte(VSS4));
-      Serial2.write(highByte(VSS4));
+      Serial1.write(1);                        // send 1 to confirm cmd received and valid
+      Serial1.write(canin_channel);            // confirms the destination channel               //write back the requested data
+      Serial1.write(lowByte(VSS1));
+      Serial1.write(highByte(VSS1));
+      Serial1.write(lowByte(VSS2));
+      Serial1.write(highByte(VSS2));
+      Serial1.write(lowByte(VSS3));
+      Serial1.write(highByte(VSS3));
+      Serial1.write(lowByte(VSS4));
+      Serial1.write(highByte(VSS4));
     break;
     default:
-      Serial2.write(0);                        // send 0 to confirm cmd received but not valid
-      Serial2.write(canin_channel);            // destination channel
-      for (int i=0; i<8; i++) { Serial2.write(0); }                // we need to still write some crap as an response, or real time data reading will slow down significantly
+      Serial1.write(0);                        // send 0 to confirm cmd received but not valid
+      Serial1.write(canin_channel);            // destination channel
+      for (int i=0; i<8; i++) { Serial1.write(0); }                // we need to still write some crap as an response, or real time data reading will slow down significantly
       Serial.print ("Wrong CAN address");
     break;
   }
@@ -562,7 +562,7 @@ void displayData(){
   Serial.print ("TPS-"); Serial.print (TPS); Serial.println("\t");
 
 }
-//================================
+//================================,,,,,,,,,,,,,,,,,,,,,,,
 
 // This function processes the data received from speeduino and converts it to usable format
 void processData(){   // necessary conversion for the data before sending to CAN BUS
@@ -662,13 +662,13 @@ void processData(){   // necessary conversion for the data before sending to CAN
 // Handle A-message from speeduino. This contains real time data.
 void HandleA()
 {
-  Serial2.print ("A ");
+  Serial1.print ("A");
   data_error = false;
   for (int i=0; i<75; i++) {
-    SpeedyResponse[i] = Serial2.read();
+    SpeedyResponse[i] = Serial1.read();
     }
   processData();                  // do the necessary processing for received data
-  //displayData();                  // only required for debugging
+  displayData();                  // only required for debugging
   doRequest = true;               // restart data reading
   oldtime = millis();             // zero the timeout
   SerialState = NOTHING_RECEIVED; // all done. We set state for reading what's next message.
@@ -678,12 +678,12 @@ void HandleA()
 // Handle R-message from speeduino. This is a request for some data.
 void HandleR()
 {
-  Serial2.println ("R ");
+  Serial1.println ("R");
   byte tmp0;
   byte tmp1;
-  canin_channel = Serial2.read();
-  tmp0 = Serial2.read();  // read in lsb of source can address
-  tmp1 = Serial2.read();  // read in msb of source can address
+  canin_channel = Serial1.read();
+  tmp0 = Serial1.read();  // read in lsb of source can address
+  tmp1 = Serial1.read();  // read in msb of source can address
   CanAddress = tmp1<<8 | tmp0 ;
   SendDataToSpeeduino();  // send the data to speeduino
   SerialState = NOTHING_RECEIVED; // all done. We set state for reading what's next message.
@@ -693,7 +693,7 @@ void HandleR()
 // Read the first byte from serial to determine what kind of message it is
 void ReadSerial()
 {
-  currentCommand = Serial2.read();
+  currentCommand = Serial1.read();
   switch (currentCommand)
   {
     case 'A':  // Speeduino sends data in A-message
@@ -715,13 +715,13 @@ void loop() {
   unsigned long NowDashUpdate = millis();
   switch(SerialState) {
     case NOTHING_RECEIVED:
-      if (Serial2.available() > 0) { ReadSerial(); }
+      if (Serial1.available() > 0) { ReadSerial(); }
       break;
     case A_MESSAGE:
-      if (Serial2.available() >= 74) { HandleA(); }
+      if (Serial1.available() >= 74) { HandleA(); }
       break;
     case R_MESSAGE:
-      if (Serial2.available() >= 3) {  HandleR(); }
+      if (Serial1.available() >= 3) {  HandleR(); }
       break;
     case PWM_MESSAGE:
       // Not implemented, add if needed
@@ -729,6 +729,7 @@ void loop() {
     default:
       break;
   }
+  requestData();
   if ( (millis()-oldtime) > 500) {
     oldtime = millis();
     Serial.println ("Timeout from speeduino!");
