@@ -28,7 +28,6 @@
 /*
 Libs used:
 [CAN@0.3.1] - Arduino CAN library for ESP32
-[Ticker@3.3.0] - ESP32 Ticker library
 [BluetoothSerial@3.3.0] - Bluetooth Serial library for ESP32
 */
 
@@ -36,12 +35,15 @@ Libs used:
 #include "config.h" // configuration file
 #include <Arduino.h>
 #include <CAN.h>
-#include <Ticker.h>
 #include "dashboard.h" // for wifi dashboard
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
 // ===============================
 
-// ====== GLOBAL VARIABLES FOR DASHBOARD ======
+// ====== GLOBAL VARIABLES ======
 Dashboard dash;
+TimerHandle_t requestTimer;
+TimerHandle_t sendTimer;
 // ==========================================
 
 // ======DONT WORRY ABOUT THAT ====
@@ -166,9 +168,16 @@ uint8_t acBitfield;
 uint8_t acBitfield2;
 uint8_t eFanBitfield;
 bool doRequest = true;
+// ===============================
 
-Ticker requestTicker;
-Ticker sendTicker;
+// ====== FUNCTION FREETOS DECLARATIONS ======
+void requestDataCallback(TimerHandle_t xTimer) {
+  requestData();
+}
+
+void sendDataCallback(TimerHandle_t xTimer) {
+  SendData();
+}
 // ===============================
 
 // Request data from speeduino at defined rate
@@ -442,8 +451,22 @@ void setup(){
   acBitfield2 = 0;
   eFanBitfield = 0;
 
-  requestTicker.attach_ms(1000/SerialUpdateRate, requestData);
-  sendTicker.attach(1000/ClusterUpdateRate, SendData);
+  requestTimer = xTimerCreate(
+    "RequestTimer",
+    pdMS_TO_TICKS(1000/SerialUpdateRate),
+    pdTRUE,
+    NULL,
+    requestDataCallback
+  );
+  sendTimer = xTimerCreate(
+    "SendTimer",
+    pdMS_TO_TICKS(1000/ClusterUpdateRate),
+    pdTRUE,
+    NULL,
+    sendDataCallback
+  );
+  if (requestTimer != NULL) xTimerStart(requestTimer, 0);
+  if (sendTimer != NULL) xTimerStart(sendTimer, 0);
 
   Serial.println ("Version date: 30.08.2025"); 
   doRequest = true; 
@@ -729,7 +752,6 @@ void loop() {
     default:
       break;
   }
-  requestData();
   if ( (millis()-oldtime) > 500) {
     oldtime = millis();
     Serial.println ("Timeout from speeduino!");
