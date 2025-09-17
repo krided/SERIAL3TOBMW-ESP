@@ -68,10 +68,10 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 
 ```c++
 // ==================== PINS ====================
-#define SERIAL2_RX_PIN 16 // GPIO16 (RX2)
-#define SERIAL2_TX_PIN 17 // GPIO17 (TX2)
-#define CAN_RX_PIN     4 // GPIO4 (CAN RX)
-#define CAN_TX_PIN     5 // GPIO5 (CAN TX)
+#define SERIAL1_RX_PIN 22 // GPIO16 (RX2)
+#define SERIAL1_TX_PIN 23 // GPIO17 (TX2)
+#define CAN_RX_PIN     32 // GPIO4 (CAN RX)
+#define CAN_TX_PIN     26 // GPIO5 (CAN TX)
 // ==================== Serial settings ====================
 #define SERIAL_BAUDRATE 115200  // Baudrate for Serial2 communication with Speeduino
 #define SERIAL_DEBUG_BAUDRATE 115200 // Baudrate for Serial debugging
@@ -80,6 +80,12 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 #define HOT_TEMP_BLINK 100    // Set temperature for overheat light to start blinking
 #define HOT_TEMP_SOLID 120    // Set temperature for overheat light to stay solid
 #define BLINKING 1            // 1 = enable blinking, 0 = solid light only
+// ==================== UPDATE RATE ====================
+#define SerialUpdateRate 30   // 30 Hz rate limit to update secondary serial data from speeduino
+#define ClusterUpdateRate 50  // 50 Hz Frequency for the cars instrument cluster
+
+// ==================== FUEL / INJECTOR ====================
+#define PW_ADJUST 19000           // scaling for fuel consumption calculation
 ```
 
 ---
