@@ -1,10 +1,10 @@
 #pragma once
 
 // ==================== PINS ====================
-#define SERIAL2_RX_PIN 16 // GPIO16 (RX2)
-#define SERIAL2_TX_PIN 17 // GPIO17 (TX2)
-#define CAN_RX_PIN     4 // GPIO4 (CAN RX)
-#define CAN_TX_PIN     5 // GPIO5 (CAN TX)
+#define SERIAL1_RX_PIN 22 // GPIO16 (RX2)
+#define SERIAL1_TX_PIN 23 // GPIO17 (TX2)
+#define CAN_RX_PIN     32 // GPIO4 (CAN RX)
+#define CAN_TX_PIN     26 // GPIO5 (CAN TX)
 // ==================== Serial settings ====================
 #define SERIAL_BAUDRATE 115200  // Baudrate for Serial2 communication with Speeduino
 #define SERIAL_DEBUG_BAUDRATE 115200 // Baudrate for Serial debugging
