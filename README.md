@@ -44,10 +44,6 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
   <img width="877" height="770" src="https://github.com/user-attachments/assets/0d80677b-53cd-4988-9236-8510f23269a1" />  
   Or use a simple **voltage divider**:  
   <img width="408" height="151" src="https://github.com/user-attachments/assets/4e58a212-3535-470a-83a7-41f3adcdf146" />
-
-- **Optional Step-down Converter** to power ESP32 safely:  
-  <img width="800" height="800" src="https://github.com/user-attachments/assets/f336b0d8-da8c-4496-a9a9-f8525744cfa7" />
-
 ---
 
 ## Installation
@@ -62,7 +58,7 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 4. Connect your hardware:
    - ESP32 UART ↔ Speeduino Serial3 (via logic level converter)
    - ESP32 CAN ↔ MCP2551 ↔ Vehicle CAN bus
-   - Power ESP32 and MCP2551
+   - Power ESP32 and MCP2551 from 5V pin from speeduino (ESP32 VIN pin)
 5. Upload code via Arduino IDE.
 6. Enjoy monitoring your Speeduino data on BMW cluster or optional dashboard.
 
