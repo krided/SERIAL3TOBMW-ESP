@@ -1,11 +1,16 @@
 /*
-  BMW E39/E46 CAN Bridge & Dashboard for ESP32 WROOM32D + MCP2551
+  BMW E39/E46 CAN Bridge & Dashboard for ESP32 WROOM32D + MCP2515
   ----------------------------------------------------------------
 
   This project is an ESP32-based solution that reads real-time data from
   a Speeduino EFI system via Serial3 and converts it into CAN messages 
   compatible with BMW E39/E46 instrument clusters. It also provides a
   customizable dashboard, supporting Bluetooth telemetry for mobile devices.
+
+  Hardware requirements:
+  - ESP32 WROOM32D
+  - MCP2515 CAN controller module
+  - MCP2551 CAN transceiver (usually included with MCP2515 modules)
 
   Portions of this code are derived from work by the user "pazi88", who
   originally developed the Speeduino-to-CAN BMW bridge for STM32. Their contributions
@@ -27,13 +32,14 @@
 
 /*
 Libs used:
-[CAN@0.3.1] - Arduino CAN library for ESP32
+[CAN@0.3.1] - Arduino CAN library with MCP2515 support
 [BluetoothSerial@3.3.0] - Bluetooth Serial library for ESP32
 */
 
 // ========== Library ===========
 #include "config.h" // configuration file
 #include <Arduino.h>
+#include <SPI.h>
 #include <CAN.h>
 #include "dashboard.h" // for wifi dashboard
 #include "freertos/FreeRTOS.h"
@@ -173,6 +179,15 @@ uint8_t eFanBitfield;
 bool doRequest = true;
 // ===============================
 
+// ====== TIMEOUT AND RATES ======
+const uint16_t SPEEDUINO_TIMEOUT_MS = 500;  // Timeout for Speeduino communication
+const uint8_t RPM_CONVERSION_FACTOR = 6.4;  // RPM conversion factor for BMW cluster
+const uint8_t CLT_TEMP_OFFSET = 40;          // CLT temperature offset
+const uint16_t MAX_ENGINE_RPM = 8000;        // Maximum expected engine RPM
+const uint8_t MAX_CLT_TEMP = 182;            // Maximum CLT temperature (142°C)
+const uint8_t MAX_TPS_VALUE = 200;           // Maximum TPS value
+// ===============================
+
 // =========== DEBUG =============
 #if DEBUG_SERIAL
   #define DEBUG_PRINT(x)   Serial.print(x)
@@ -188,10 +203,11 @@ bool doRequest = true;
 /**
  * Main task for handling Speeduino communication and dashboard updates
  * This task runs continuously and handles:
- * - Serial data requests to Speeduino
- * - Processing incoming serial messages
- * - Updating dashboard values
- * - Managing communication timeouts
+ * - Serial data requests to Speeduino every 33ms (30Hz)
+ * - Processing incoming serial messages (A and R type)
+ * - Updating dashboard values at configured rate
+ * - Managing communication timeouts (500ms)
+ * - Reading incoming CAN messages
  */
 void mainTask(void *pvParameters) {
   (void) pvParameters;
@@ -225,7 +241,7 @@ void mainTask(void *pvParameters) {
       default:
         break;
     }
-    if ((millis() - oldtime) > 500) {
+    if ((millis() - oldtime) > SPEEDUINO_TIMEOUT_MS) {
       oldtime = millis();
       Serial.println("Timeout from speeduino!");
       doRequest = true;
@@ -271,6 +287,15 @@ void requestData() {
 
 // ====== CAN MESSAGE FUNCTIONS ======
 
+// Helper function to send CAN message
+void sendCANMessage(CAN_message_t &msg) {
+  CAN.beginPacket(msg.id);
+  for (int i = 0; i < msg.len; i++) {
+    CAN.write(msg.buf[i]);
+  }
+  CAN.endPacket();
+}
+
 // Send CAN messages at 50Hz rate to BMW cluster
 void SendData()
 {
@@ -284,9 +309,7 @@ void SendData()
   CAN_msg_RPM.buf[2]= rpmLSB; // RPM LSB
   CAN_msg_RPM.buf[3]= rpmMSB; // RPM MSB
 
-  CAN.beginPacket(CAN_msg_RPM.id);
-  for (int i=0; i<CAN_msg_RPM.len; i++) CAN.write(CAN_msg_RPM.buf[i]);
-  CAN.endPacket();
+  sendCANMessage(CAN_msg_RPM);
 
   // Send fuel consumption and error lights
   if (CEL < 200){  
@@ -326,9 +349,7 @@ void SendData()
   CAN_msg_MPG_CEL.buf[1]= pwLSB;  // LSB Fuel consumption
   CAN_msg_MPG_CEL.buf[2]= pwMSB;  // MSB Fuel Consumption
   CAN_msg_MPG_CEL.buf[3]= tempLight ;  // Overheat light
-  CAN.beginPacket(CAN_msg_MPG_CEL.id);
-  for (int i=0; i<CAN_msg_MPG_CEL.len; i++) CAN.write(CAN_msg_MPG_CEL.buf[i]);
-  CAN.endPacket();
+  sendCANMessage(CAN_msg_MPG_CEL);
   
   //Send CLT and TPS
   CAN_msg_CLT_TPS.buf[1] = CLT; // Coolant temp
@@ -355,9 +376,7 @@ void SendData()
       CAN_msg_CLT_TPS.buf[0] = 0x11;
       break;
   }
-  CAN.beginPacket(CAN_msg_CLT_TPS.id);
-  for (int i=0; i<CAN_msg_CLT_TPS.len; i++) CAN.write(CAN_msg_CLT_TPS.buf[i]);
-  CAN.endPacket();
+  sendCANMessage(CAN_msg_CLT_TPS);
 
   MSGcounter++;
   if (MSGcounter >= 8)
@@ -436,28 +455,25 @@ void handleEMLLamp() {
 
 // Handle overheat light behavior based on coolant temperature
 void handleHotBlink(uint8_t temp) {
-  int16_t correctedTemp = temp - 40;
+  int16_t correctedTemp = temp - CLT_TEMP_OFFSET;
   static uint32_t lastBlink = 0;
   static bool lampOn = false;
 
-    if (correctedTemp >= HOT_TEMP_SOLID) {
-      tempLight = 0x8; // light on solid
-      return;
+  if (correctedTemp >= HOT_TEMP_SOLID) {
+    tempLight = 0x8; // light on solid
+    return;
+  }
+  
+  if (BLINKING == 1 && correctedTemp >= HOT_TEMP_BLINK) {
+    // If higher temp, the light blinks more frequently (e.g., every 1000ms at 100°C, every 200ms at 119°C)
+    uint16_t interval = map(correctedTemp, HOT_TEMP_BLINK, HOT_TEMP_SOLID - 1, 1000, 200);
+    if (millis() - lastBlink > interval) {
+      lampOn = !lampOn;
+      tempLight = lampOn ? 0x8 : 0x0;
+      lastBlink = millis();
     }
-    if (BLINKING == 1)
-    {
-      if (correctedTemp >= HOT_TEMP_BLINK) {
-      // If higher temp, the light blinks more frequently (e.g., every 1000ms at 100°C, every 200ms at 119°C)
-      uint16_t interval = map(correctedTemp, HOT_TEMP_BLINK, HOT_TEMP_SOLID - 1, 1000, 200);
-      if (millis() - lastBlink > interval) {
-        lampOn = !lampOn;
-        tempLight = lampOn ? 0x8 : 0x0;
-        lastBlink = millis();
-      }
-    }
-    else {
-      tempLight = 0x0; // off
-    }
+  } else {
+    tempLight = 0x0; // off
   }
 }
 // ====== END WARNING LIGHT FUNCTIONS ======
@@ -469,20 +485,34 @@ void setup(){
   
   Serial.println("=== ESP32 BMW CAN Bridge Starting ===");
   Serial.printf("Serial1 pins: RX=%d, TX=%d\n", SERIAL1_RX_PIN, SERIAL1_TX_PIN);
-  Serial.printf("CAN pins: RX=%d, TX=%d\n", CAN_RX_PIN, CAN_TX_PIN);
+  Serial.printf("MCP2515 pins: CS=%d, INT=%d\n", MCP2515_CS_PIN, MCP2515_INT_PIN);
+  Serial.printf("SPI pins: MOSI=%d, MISO=%d, SCK=%d\n", MCP2515_MOSI_PIN, MCP2515_MISO_PIN, MCP2515_SCK_PIN);
   
   doRequest = false; // avoid sending A command before speeduino is ready
   rRequestCounter = 0;
 
   dash.begin(); // Initialize Bluetooth dashboard
 
-  Serial.println("Initializing CAN bus...");
-  CAN.setPins(CAN_RX_PIN, CAN_TX_PIN);
+  Serial.println("Initializing SPI and MCP2515 CAN controller...");
+  
+  // Initialize SPI with custom pins to avoid conflict with Serial1
+  SPI.begin(MCP2515_SCK_PIN, MCP2515_MISO_PIN, MCP2515_MOSI_PIN, MCP2515_CS_PIN);
+  
+  // Set MCP2515 pins
+  CAN.setPins(MCP2515_CS_PIN, MCP2515_INT_PIN);
+  
+  // Set clock frequency if your MCP2515 module uses a different crystal
+  // Most modules use 8MHz, but some use 16MHz
+  // CAN.setClockFrequency(8E6);  // Uncomment if using 8MHz crystal
+  // CAN.setClockFrequency(16E6); // Uncomment if using 16MHz crystal
+  
+  // Initialize CAN bus at 500kbps
   if (!CAN.begin(CAN_BAUDRATE)) {
-    Serial.println("Starting CAN failed!");
+    Serial.println("Starting MCP2515 failed!");
+    Serial.println("Check wiring and crystal frequency!");
     while (1);
   }
-  Serial.println("CAN bus initialized successfully!");
+  Serial.println("MCP2515 CAN controller initialized successfully!");
 
   CAN_msg_RPM.len = 8;
   CAN_msg_CLT_TPS.len = 8;
@@ -549,14 +579,13 @@ void setup(){
   // esp_task_wdt_init(&twdt_config);
   // esp_task_wdt_add(NULL); // Add current task to WDT
 
+  Serial.println("Version date: 30.08.2025"); 
+  doRequest = true; 
+  delay(2000);
+  rRequestCounter = SerialUpdateRate;
   xTaskCreatePinnedToCore(mainTask, "MainTask", 40960, NULL, 2, NULL, 1);
   xTaskCreatePinnedToCore(canTask, "CANTask", 10240, NULL, 1, NULL, 1);
   Serial.print("Tasks created - Free heap: "); Serial.println(ESP.getFreeHeap());
-
-  Serial.println("Version date: 30.08.2025"); 
-  doRequest = true; 
-
-  rRequestCounter = SerialUpdateRate;
 }
 // ====== END SETUP FUNCTION ======
 
@@ -733,9 +762,9 @@ void processData(){
   currentStatus.tpsADC = SpeedyResponse[73];
 
   // Check if received values make sense and convert those if all is ok.
-  if (currentStatus.RPM < 8000 && data_error == false)  // the engine will not probably rev over 8000 RPM
+  if (currentStatus.RPM < MAX_ENGINE_RPM && data_error == false)  // the engine will not probably rev over 8000 RPM
   {
-    tempRPM = currentStatus.RPM * 6.4; // RPM conversion factor for e46/e39 cluster
+    tempRPM = currentStatus.RPM * RPM_CONVERSION_FACTOR; // RPM conversion factor for e46/e39 cluster
     rpmMSB = tempRPM >> 8;  // split to high and low byte
     rpmLSB = tempRPM;
   }
@@ -743,9 +772,9 @@ void processData(){
   {
     data_error = true; // data received is probably corrupted, don't use it.
   }
-  if (currentStatus.CLT < 182 && data_error == false)  // 142 degrees Celsius is the hottest temp that fits to the conversion. 
+  if (currentStatus.CLT < MAX_CLT_TEMP && data_error == false)  // 142 degrees Celsius is the hottest temp that fits to the conversion. 
   {
-    CLT = (currentStatus.CLT - 40) * 4 / 3 + 64;  // CLT conversion factor for e46/e39 cluster
+    CLT = (currentStatus.CLT - CLT_TEMP_OFFSET) * 4 / 3 + 64;  // CLT conversion factor for e46/e39 cluster
     handleHotBlink(currentStatus.CLT);
   }
   else
@@ -753,9 +782,9 @@ void processData(){
     data_error = true;  // data received is probably corrupted, don't use it.
   }
 
-  if (currentStatus.TPS < 201 && data_error == false)  // TPS values can only be from 0-200 (previously this was from 0-100 on speeduino)
+  if (currentStatus.TPS < (MAX_TPS_VALUE + 1) && data_error == false)  // TPS values can only be from 0-200 (previously this was from 0-100 on speeduino)
   {
-    TPS = map(currentStatus.TPS, 0, 200, 0, 254); // 0-100 TPS value mapped to 0x00 to 0xFE range.
+    TPS = map(currentStatus.TPS, 0, MAX_TPS_VALUE, 0, 254); // 0-200 TPS value mapped to 0x00 to 0xFE range.
     newData = true; // we have now new data and it passes the checks.
   }
   else

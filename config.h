@@ -3,10 +3,14 @@
 // ==================== PINS ====================
 #define SERIAL1_RX_PIN 22 // GPIO22 (Serial1 RX)
 #define SERIAL1_TX_PIN 23 // GPIO23 (Serial1 TX)
-#define CAN_RX_PIN     4  // GPIO4 (TWAI/CAN RX) - MCP2551
-#define CAN_TX_PIN     5  // GPIO5 (TWAI/CAN TX) - MCP2551
+// MCP2515 SPI pins
+#define MCP2515_CS_PIN   5  // GPIO5 (SPI CS)
+#define MCP2515_INT_PIN  4  // GPIO4 (MCP2515 INT)
+#define MCP2515_MOSI_PIN 21 // GPIO21 (SPI MOSI) - custom pin to avoid conflict with Serial1
+#define MCP2515_MISO_PIN 19 // GPIO19 (SPI MISO)
+#define MCP2515_SCK_PIN  18 // GPIO18 (SPI SCK)
 // ==================== Serial settings ====================
-#define SERIAL_BAUDRATE 115200  // Baudrate for Serial2 communication with Speeduino
+#define SERIAL_BAUDRATE 115200  // Baudrate for Serial1 communication with Speeduino
 #define SERIAL_DEBUG_BAUDRATE 115200 // Baudrate for Serial debugging
 #define CAN_BAUDRATE    500E3  // CAN bus speed
 // ==================== TEMPERATURE LIGHT ====================
