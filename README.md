@@ -13,10 +13,13 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 - Basic code like, exacly one to one features from pazi88 code but on esp32 with mcp2515
 - Added blinking hot led 
 - Will have only small updates for stability. Nothink more
+- Work with **1x MCP2515 CAN Transceiver**
 
 **MAIN**
+- STILL ON WORK!
 - Main code what will be used. 
 - Will have all features and updates.
+- Work with **1x MCP2551 CAN Transceiver**
 ---
 
 ## Features
@@ -48,7 +51,7 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 - **1x ESP32-WROOM-32D**  
   <img width="727" height="508" src="https://github.com/user-attachments/assets/15ae8512-49b9-4f0c-8aec-2b2c67a8fb51" />
 
-- **1x MCP2551 CAN Transceiver**  
+- **1x MCP2551 CAN Transceiver** / **1x MCP2515 CAN Transceiver**
   <img width="1000" height="1000" src="https://github.com/user-attachments/assets/cb113db2-60f7-4216-8dc7-466d4a989312" />
 
 - **1x Logic Level Converter (3.3V ↔ 5V)**  
