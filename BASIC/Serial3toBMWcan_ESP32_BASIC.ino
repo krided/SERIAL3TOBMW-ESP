@@ -3,6 +3,14 @@
 // Hardware: ESP32 WROOM with MCP2515 CAN controller
 // Converted from STM32 version by pazi88
 
+//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+//THE SOFTWARE.
+
 #include <SPI.h>
 #include <mcp_can.h>
 #include <HardwareSerial.h>
@@ -159,7 +167,6 @@ unsigned char CAN_msg_MPG_CEL[8];
 
 // Timer interrupt functions
 void onRequestTimer() {
-  // No need for portENTER_CRITICAL_ISR/portEXIT_CRITICAL_ISR with Ticker
   if (doRequest){
     SpeeduinoSerial.write("A"); // Send A to request real time data
     doRequest = false;
@@ -205,8 +212,6 @@ void handleHotBlink(uint8_t temp) {
 }
 
 void onSendTimer() {
-  // No need for portENTER_CRITICAL_ISR/portEXIT_CRITICAL_ISR with Ticker
-  
   // Send CAN messages in 50Hz phase from timer interrupt. This is important to be high enough Hz rate to make cluster work smoothly.
   if (ascMSG) {
     CAN_msg_RPM[0]= 0x05;
@@ -216,12 +221,10 @@ void onSendTimer() {
   }	
   CAN_msg_RPM[2]= rpmLSB; // RPM LSB
   CAN_msg_RPM[3]= rpmMSB; // RPM MSB
-  
   // Send RPM message
   byte result = CAN.sendMsgBuf(0x316, 0, 8, CAN_msg_RPM);
   if (result == CAN_OK) {
   }
-
   // Send fuel consumption and error lights
   if (CEL < 200){  
     if (CEL < 100){
@@ -235,7 +238,6 @@ void onSendTimer() {
   else{
     CAN_msg_MPG_CEL[0]= 0x00;  // CEL off
   }
-  
   // This updates the fuel consumption counter. It's how much fuel is injected to engine, so PW and RPM affects it.
   updatePW = updatePW + ( currentStatus.PW1 * (currentStatus.RPM/10) );
   // We adjust the counter reading so that we get correct values sent to cluster. PW_ADJUST is just trial and error value. 
@@ -256,7 +258,7 @@ void onSendTimer() {
   //Send CLT and TPS
   CAN_msg_CLT_TPS[1]= CLT; // Coolant temp
   CAN_msg_CLT_TPS[5]= TPS; // TPS value.
-  
+
   //Multiplexed Information in byte0
   switch (multiplex) {
   case 0: //CAN_LEVEL

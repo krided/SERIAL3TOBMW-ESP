@@ -5,7 +5,18 @@
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?&logo=buy-me-a-coffee&logoColor=black)](https://buycoffee.to/krided)
 
 This project reads real-time data from the **Speeduino EFI system** via UART and converts it into BMW-specific CAN messages for **E39/E46 instrument clusters**. It’s designed for ESP32 WROOM32D and MCP2551 transceiver, with optional web/Bluetooth dashboard support.
+---
 
+## VERSIONS!
+
+**BASIC**
+- Basic code like, exacly one to one features from pazi88 code but on esp32 with mcp2515
+- Added blinking hot led 
+- Will have only small updates for stability. Nothink more
+
+**MAIN**
+- Main code what will be used. 
+- Will have all features and updates.
 ---
 
 ## Features
