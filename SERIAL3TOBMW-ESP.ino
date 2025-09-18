@@ -37,43 +37,47 @@ Libs used:
 #include <CAN.h>
 #include "dashboard.h" // for wifi dashboard
 #include "freertos/FreeRTOS.h"
-#include "freertos/timers.h"
+#include "freertos/task.h"
+#include "esp_task_wdt.h"
 // ===============================
 
 // ====== GLOBAL VARIABLES ======
 Dashboard dash;
 // ==========================================
 
-// ======DONT WORRY ABOUT THAT ====
+// ====== BIT MANIPULATION MACROS ======
 #define BIT_SET(a,b) ((a) |= (1U<<(b)))
 #define BIT_CLEAR(a,b) ((a) &= ~(1U<<(b)))
 #define BIT_CHECK(var,pos) !!((var) & (1U<<(pos)))
 #define BIT_TOGGLE(var,pos) ((var)^= 1UL << (pos))
 #define BIT_WRITE(var, pos, bitvalue) ((bitvalue) ? BIT_SET((var), (pos)) : BIT_CLEAR((var), (pos)))
 
+// ====== SERIAL MESSAGE TYPES ======
 #define NOTHING_RECEIVED        0
 #define R_MESSAGE               1
 #define A_MESSAGE               2
 #define PWM_MESSAGE             3
-// ==============================
+// ===============================
 
+// ====== CAN MESSAGE STRUCTURES ======
 // Struct for CAN messages
 struct CAN_message_t {
   uint32_t id;
   uint8_t len;
   uint8_t buf[8];
 };
-static CAN_message_t CAN_msg_RPM;
-static CAN_message_t CAN_msg_CLT_TPS;
-static CAN_message_t CAN_msg_MPG_CEL;
-static CAN_message_t CAN_inMsg;
+static CAN_message_t CAN_msg_RPM;     // RPM and torque data
+static CAN_message_t CAN_msg_CLT_TPS; // Coolant temp and TPS data
+static CAN_message_t CAN_msg_MPG_CEL; // Fuel consumption and error lights
+static CAN_message_t CAN_inMsg;       // Incoming CAN messages
 // ===============================
 
-// ====== GLOBAL VARIABLES ======
+// ====== DASHBOARD VARIABLES ======
 unsigned long lastDashUpdate = 0; // last time dashboard was updated
-const unsigned long dashupdaterate = DASH_UPLOAD_MS - DASH_UPDATE_MS; // updating data in dashboard with rate defined in config.h
+const unsigned long dashupdaterate = DASH_UPLOAD_MS - DASH_UPDATE_MS; // dashboard update rate from config.h
 
-// This struct gathers data read from speeduino. This is really just direct copy of what speeduino has internally
+// ====== SPEEDUINO DATA STRUCTURE ======
+// This struct gathers data read from Speeduino. This is a direct copy of Speeduino's internal structure
 struct statuses {
   uint8_t secl; // secl is simply a counter that increments each second.
   uint8_t status1; // status1 Bitfield, inj1Status(0), inj2Status(1), inj3Status(2), inj4Status(3), DFCOOn(4), boostCutFuel(5), toothLog1Ready(6), toothLog2Ready(7)
@@ -133,32 +137,33 @@ struct statuses {
 
 statuses currentStatus;
 
-static uint32_t oldtime=millis();   // for the timeout
-uint8_t SpeedyResponse[100]; //The data buffer for the serial3 data. This is longer than needed, just in case
+// ====== COMMUNICATION VARIABLES ======
+static uint32_t oldtime = millis();   // for the timeout detection
+uint8_t SpeedyResponse[100]; // Data buffer for serial communication with Speeduino
 uint8_t rpmLSB;   // Least significant byte for RPM message
-uint8_t rpmMSB;  // Most significant byte for RPM message
-uint8_t pwLSB;   // Least significant byte for PW message
-uint8_t pwMSB;  // Most significant byte for PW message
-uint8_t CEL;   //timer for how long CEL light be kept on
+uint8_t rpmMSB;   // Most significant byte for RPM message
+uint8_t pwLSB;    // Least significant byte for PW message
+uint8_t pwMSB;    // Most significant byte for PW message
+uint8_t CEL;      // Timer for how long CEL light should be kept on
 uint32_t updatePW;
 uint8_t odometerLSB;
 uint8_t odometerMSB;
 uint8_t FuelLevel;
 uint8_t ambientTemp;
-int CLT; // to store coolant temp
+int CLT; // Coolant temperature for BMW cluster
 uint32_t PWcount;
-uint8_t TPS,tempLight; // TPS value and overheat light on/off
-bool data_error; //indicator for the data from speeduino being ok.
-bool responseSent; // to keep track if we have responded to data request or not.
-bool newData; // This tells if we have new data available from speeduino or not.
-bool ascMSG; // ASC message received.
-uint8_t rRequestCounter; // only request PWM fan duty from speeduino once in a second
-uint8_t PWMfanDuty; // PWM fan duty
+uint8_t TPS, tempLight; // TPS value and overheat light status
+bool data_error; // Indicator for data validity from Speeduino
+bool responseSent; // Track if we have responded to data request
+bool newData; // Indicates if we have new data available from Speeduino
+bool ascMSG; // ASC message received status
+uint8_t rRequestCounter; // Request PWM fan duty from Speeduino once per second
+uint8_t PWMfanDuty; // PWM fan duty cycle
 uint8_t data[255]; // For DS2 data
-uint8_t SerialState,canin_channel,currentCommand;
-uint16_t CanAddress,runningClock;
-uint16_t VSS,VSS1,VSS2,VSS3,VSS4;
-uint8_t MSGcounter; //this keeps track of which multiplexed info is sent in 0x329 byte 0
+uint8_t SerialState, canin_channel, currentCommand;
+uint16_t CanAddress, runningClock;
+uint16_t VSS, VSS1, VSS2, VSS3, VSS4; // Vehicle speed sensor values
+uint8_t MSGcounter; // Tracks which multiplexed info is sent in 0x329 byte 0
 uint8_t multiplex;
 uint8_t radOutletTemp;
 uint8_t oilTemp;
@@ -168,14 +173,36 @@ uint8_t eFanBitfield;
 bool doRequest = true;
 // ===============================
 
-// ====== FUNCTION FREETOS DECLARATIONS ======
-void looptask(void *pvParameters) {
+// =========== DEBUG =============
+#if DEBUG_SERIAL
+  #define DEBUG_PRINT(x)   Serial.print(x)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+#else
+  #define DEBUG_PRINT(x)   // nic
+  #define DEBUG_PRINTLN(x) // nic
+#endif
+// ===============================
+
+// ====== FREERTOS TASK FUNCTIONS ======
+
+/**
+ * Main task for handling Speeduino communication and dashboard updates
+ * This task runs continuously and handles:
+ * - Serial data requests to Speeduino
+ * - Processing incoming serial messages
+ * - Updating dashboard values
+ * - Managing communication timeouts
+ */
+void mainTask(void *pvParameters) {
   (void) pvParameters;
+  
   for(;;) {
     if (doRequest) {
-    requestData();
+      requestData();
     }
+    displayData();
     unsigned long NowDashUpdate = millis();
+    
     switch(SerialState) {
       case NOTHING_RECEIVED:
         if (Serial1.available() > 0) { 
@@ -203,29 +230,51 @@ void looptask(void *pvParameters) {
       Serial.println("Timeout from speeduino!");
       doRequest = true;
     }
+    
     readCanMessage();
+    
     // Update dash values at defined rate 
     if (NowDashUpdate - lastDashUpdate > dashupdaterate) {
       lastDashUpdate = NowDashUpdate;
-      updateDashValues();
+      updateDashValues(); // Function defined in config.h
     }
-    vTaskDelay(1); // krótka pauza, aby task nie zjadał CPU
+    
+    vTaskDelay(pdMS_TO_TICKS(1)); // Short delay to prevent CPU hogging
   }
 }
-// ===============================
 
-// Request data from speeduino at defined rate
+/**
+ * CAN task for sending messages to BMW cluster at 50Hz
+ * This ensures smooth operation of the BMW instrument cluster
+ */
+void canTask(void *pvParameters) {
+  (void) pvParameters;
+  
+  const TickType_t xFrequency = pdMS_TO_TICKS(20); // 20ms = 50Hz
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    SendData(); // Send CAN messages at 50Hz
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+// ====== SPEEDUINO COMMUNICATION FUNCTIONS ======
+
+// Request data from Speeduino at defined rate
 void requestData() {
   if (doRequest == true){
     Serial1.write("A"); // Send A to request real time data
     doRequest = false;
   }
 }
-// ===============================
 
-// Send the data to speeduino when it requests it
-void SendData()   // Send can messages in 50Hz phase from timer interrupt. This is important to be high enough Hz rate to make cluster work smoothly.
+// ====== CAN MESSAGE FUNCTIONS ======
+
+// Send CAN messages at 50Hz rate to BMW cluster
+void SendData()
 {
+  DEBUG_PRINTLN("SEND CAN DATA");
   if (ascMSG) {
     CAN_msg_RPM.buf[0]= 0x05;
   }
@@ -257,10 +306,10 @@ void SendData()   // Send can messages in 50Hz phase from timer interrupt. This 
   handleEMLLamp();
   }
 
-  //To do: Handle low battery warning
-  //if (currentStatus.battery10 < 100) {
-  //  // Handle low battery warning
-  //}
+  // TODO: Handle low battery warning
+  // if (currentStatus.battery10 < 100) {
+  //   // Handle low battery warning
+  // }
 
   // This updates the fuel consumption counter. It's how much fuel is injected to engine, so PW and RPM affects it.
   updatePW = updatePW + ( currentStatus.PW1 * (currentStatus.RPM/10) );
@@ -282,30 +331,29 @@ void SendData()   // Send can messages in 50Hz phase from timer interrupt. This 
   CAN.endPacket();
   
   //Send CLT and TPS
-  
-  CAN_msg_CLT_TPS.buf[1]= CLT; // Coolant temp
-  CAN_msg_CLT_TPS.buf[5]= TPS; // TPS value.
-    //Multiplexed Information in byte0
+  CAN_msg_CLT_TPS.buf[1] = CLT; // Coolant temp
+  CAN_msg_CLT_TPS.buf[5] = TPS; // TPS value
+  //Multiplexed Information in byte0
   switch (multiplex) {
-  case 0: //CAN_LEVEL
-    CAN_msg_CLT_TPS.buf[0]= 0x11;
-    break;
-  case 1: //OBD_STEUER
-    if (currentStatus.RPM < 400)
-    {
-      CAN_msg_CLT_TPS.buf[0]= 0x80;
-    }
-    else
-    {
-      CAN_msg_CLT_TPS.buf[0]= 0x86;
-    }
-    break;
-  case 2: //MD_NORM
-    CAN_msg_CLT_TPS.buf[0]= 0xD9;
-    break;
-  default:
-    CAN_msg_CLT_TPS.buf[0]= 0x11;
-    break;
+    case 0: //CAN_LEVEL
+      CAN_msg_CLT_TPS.buf[0] = 0x11;
+      break;
+    case 1: //OBD_STEUER
+      if (currentStatus.RPM < 400)
+      {
+        CAN_msg_CLT_TPS.buf[0] = 0x80;
+      }
+      else
+      {
+        CAN_msg_CLT_TPS.buf[0] = 0x86;
+      }
+      break;
+    case 2: //MD_NORM
+      CAN_msg_CLT_TPS.buf[0] = 0xD9;
+      break;
+    default:
+      CAN_msg_CLT_TPS.buf[0] = 0x11;
+      break;
   }
   CAN.beginPacket(CAN_msg_CLT_TPS.id);
   for (int i=0; i<CAN_msg_CLT_TPS.len; i++) CAN.write(CAN_msg_CLT_TPS.buf[i]);
@@ -315,71 +363,71 @@ void SendData()   // Send can messages in 50Hz phase from timer interrupt. This 
   if (MSGcounter >= 8)
   {
     multiplex++;
-      if (multiplex >= 3)
-      {
-        multiplex = 0;
-      }
+    if (multiplex >= 3)
     {
-      MSGcounter = 0;
+      multiplex = 0;
     }
+    MSGcounter = 0;
   }
 }
-// ===============================  
+// ====== END CAN MESSAGE FUNCTIONS ======
 
-// Check  3 seconds CEL light timer and turn off the light if needed
+// ====== WARNING LIGHT CONTROL FUNCTIONS ======
+
+// Check 3 seconds CEL light timer and turn off the light if needed
 void handleCelLamp() {
   static bool celActive = false;
   static uint32_t celStartTime = 0;
 
   if (!celActive) {
-    // Wywołaj, aby zapalić lampkę
+    // Activate CEL light
     celActive = true;
     celStartTime = millis();
-    CAN_msg_MPG_CEL.buf[0] = 0x02; // zapal lampkę
+    CAN_msg_MPG_CEL.buf[0] = 0x02; // Turn on CEL light
   } else {
-    // Sprawdzaj w pętli, czy minęły 3 sekundy
+    // Check if 3 seconds have passed
     if (millis() - celStartTime >= 3000) {
-      CAN_msg_MPG_CEL.buf[0] = 0x00; // zgaś lampkę
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // Turn off CEL light
       celActive = false;
     }
   }
 }
 // ===============================
 
-// Check  3 seconds EML and CEL light timer and turn off the light if needed
+// Check 3 seconds EML and CEL light timer and turn off the light if needed
 void handleCelELMLamp() {
   static bool celActive = false;
   static uint32_t celStartTime = 0;
 
   if (!celActive) {
-    // Wywołaj, aby zapalić lampkę
+    // Activate both CEL and EML lights
     celActive = true;
     celStartTime = millis();
-    CAN_msg_MPG_CEL.buf[0] = 0x12; // zapal lampkę
+    CAN_msg_MPG_CEL.buf[0] = 0x12; // Turn on both lights
   } else {
-    // Sprawdzaj w pętli, czy minęły 3 sekundy
+    // Check if 3 seconds have passed
     if (millis() - celStartTime >= 3000) {
-      CAN_msg_MPG_CEL.buf[0] = 0x00; // zgaś lampkę
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // Turn off both lights
       celActive = false;
     }
   }
 }
 // ===============================
 
-// Check  3 seconds EML light timer and turn off the light if needed
+// Check 3 seconds EML light timer and turn off the light if needed
 void handleEMLLamp() {
   static bool celActive = false;
   static uint32_t celStartTime = 0;
 
   if (!celActive) {
-    // Wywołaj, aby zapalić lampkę
+    // Activate EML light
     celActive = true;
     celStartTime = millis();
-    CAN_msg_MPG_CEL.buf[0] = 0x10; // zapal lampkę
+    CAN_msg_MPG_CEL.buf[0] = 0x10; // Turn on EML light
   } else {
-    // Sprawdzaj w pętli, czy minęły 3 sekundy
+    // Check if 3 seconds have passed
     if (millis() - celStartTime >= 3000) {
-      CAN_msg_MPG_CEL.buf[0] = 0x00; // zgaś lampkę
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // Turn off EML light
       celActive = false;
     }
   }
@@ -412,55 +460,61 @@ void handleHotBlink(uint8_t temp) {
     }
   }
 }
-// ===============================
+// ====== END WARNING LIGHT FUNCTIONS ======
 
-// Main setup function
+// ====== MAIN SETUP FUNCTION ======
 void setup(){
-  Serial1.begin(SERIAL_BAUDRATE, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN); // RX2=16, TX2=17 (change pins if needed)
-  Serial.begin(SERIAL_DEBUG_BAUDRATE); // for debugging
+  Serial1.begin(SERIAL_BAUDRATE, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN);
+  Serial.begin(SERIAL_DEBUG_BAUDRATE);
   
-  doRequest = false; // to avoid sending A command before speeduino is ready
-  rRequestCounter = 0; // to reset the counter
+  Serial.println("=== ESP32 BMW CAN Bridge Starting ===");
+  Serial.printf("Serial1 pins: RX=%d, TX=%d\n", SERIAL1_RX_PIN, SERIAL1_TX_PIN);
+  Serial.printf("CAN pins: RX=%d, TX=%d\n", CAN_RX_PIN, CAN_TX_PIN);
+  
+  doRequest = false; // avoid sending A command before speeduino is ready
+  rRequestCounter = 0;
 
   dash.begin(); // Initialize Bluetooth dashboard
 
-  CAN.setPins(CAN_RX_PIN, CAN_TX_PIN); // Set CAN pins
-  if (!CAN.begin(CAN_BAUDRATE)) { // Start CAN bus at 500 kbps
+  Serial.println("Initializing CAN bus...");
+  CAN.setPins(CAN_RX_PIN, CAN_TX_PIN);
+  if (!CAN.begin(CAN_BAUDRATE)) {
     Serial.println("Starting CAN failed!");
     while (1);
   }
+  Serial.println("CAN bus initialized successfully!");
 
-  CAN_msg_RPM.len = 8; // 8 bytes in can message
+  CAN_msg_RPM.len = 8;
   CAN_msg_CLT_TPS.len = 8;
   CAN_msg_MPG_CEL.len = 8;
-  CAN_msg_RPM.id = 0x316; // CAN ID for RPM message is 0x316
-  CAN_msg_CLT_TPS.id = 0x329; // CAN ID for CLT and TSP message is 0x329
-  CAN_msg_MPG_CEL.id = 0x545; // CAN ID for fuel consumption and CEl light is 0x545
+  CAN_msg_RPM.id = 0x316; // CAN ID for RPM message
+  CAN_msg_CLT_TPS.id = 0x329; // CAN ID for CLT and TPS message
+  CAN_msg_MPG_CEL.id = 0x545; // CAN ID for fuel consumption and CEL light
 
-  // send this message to get rid of EML light and also set the static values for the message
-  CAN_msg_MPG_CEL.buf[0]= 0x02;  // error State
-  CAN_msg_MPG_CEL.buf[1]= 0x00;  // LSB Fuel consumption
-  CAN_msg_MPG_CEL.buf[2]= 0x00;  // MSB Fuel Consumption
-  CAN_msg_MPG_CEL.buf[3]= 0x00;  // Overheat light
-  CAN_msg_MPG_CEL.buf[4]= 0x00; // not used, but set to zero just in case.
-  CAN_msg_MPG_CEL.buf[5]= 0x00; // not used, but set to zero just in case.
-  CAN_msg_MPG_CEL.buf[6]= 0x00; // not used, but set to zero just in case.
-  CAN_msg_MPG_CEL.buf[7]= 0x00; // not used, but set to zero just in case.
+  // Send this message to get rid of EML light and also set the static values for the message
+  CAN_msg_MPG_CEL.buf[0] = 0x02;  // error State
+  CAN_msg_MPG_CEL.buf[1] = 0x00;  // LSB Fuel consumption
+  CAN_msg_MPG_CEL.buf[2] = 0x00;  // MSB Fuel Consumption
+  CAN_msg_MPG_CEL.buf[3] = 0x00;  // Overheat light
+  CAN_msg_MPG_CEL.buf[4] = 0x00;  // not used, but set to zero just in case
+  CAN_msg_MPG_CEL.buf[5] = 0x00;  // not used, but set to zero just in case
+  CAN_msg_MPG_CEL.buf[6] = 0x00;  // not used, but set to zero just in case
+  CAN_msg_MPG_CEL.buf[7] = 0x00;  // not used, but set to zero just in case
 
-  // set the static values for the other two messages
-  CAN_msg_RPM.buf[0]= 0x01;  //bitfield, Bit0 = 1 = terminal 15 on detected, Bit2 = 1 = 1 = the ASC message ASC1 was received within the last 500 ms and contains no plausibility errors
-  CAN_msg_RPM.buf[1]= 0x0C;  //Indexed Engine Torque in % of C_TQ_STND TBD do torque calculation!!
-  CAN_msg_RPM.buf[4]= 0x0C;  //Indicated Engine Torque in % of C_TQ_STND TBD do torque calculation!! Use same as for byte 1
-  CAN_msg_RPM.buf[5]= 0x15;  //Engine Torque Loss (due to engine friction, AC compressor and electrical power consumption)
-  CAN_msg_RPM.buf[6]= 0x00;  //not used
-  CAN_msg_RPM.buf[7]= 0x35;  //Theorethical Engine Torque in % of C_TQ_STND after charge intervention
+  // Set the static values for the other two messages
+  CAN_msg_RPM.buf[0] = 0x01;  // bitfield, Bit0 = 1 = terminal 15 on detected, Bit2 = 1 = the ASC message ASC1 was received within the last 500 ms and contains no plausibility errors
+  CAN_msg_RPM.buf[1] = 0x0C;  // Indexed Engine Torque in % of C_TQ_STND TODO: do torque calculation
+  CAN_msg_RPM.buf[4] = 0x0C;  // Indicated Engine Torque in % of C_TQ_STND TODO: do torque calculation - Use same as for byte 1
+  CAN_msg_RPM.buf[5] = 0x15;  // Engine Torque Loss (due to engine friction, AC compressor and electrical power consumption)
+  CAN_msg_RPM.buf[6] = 0x00;  // not used
+  CAN_msg_RPM.buf[7] = 0x35;  // Theoretical Engine Torque in % of C_TQ_STND after charge intervention
 
-  CAN_msg_CLT_TPS.buf[0]= 0x11;  //Multiplexed Information
-  CAN_msg_CLT_TPS.buf[2]= 0xB2;  //CLT temp
-  CAN_msg_CLT_TPS.buf[3]= 0x00;  //Baro
-  CAN_msg_CLT_TPS.buf[4]= 0x08;  //bitfield, Bit0 = 0 = Clutch released, Bit 3 = 1 = engine running
-  CAN_msg_CLT_TPS.buf[6]= 0x00;  //TPS_VIRT_CRU_CAN (Not used)
-  CAN_msg_CLT_TPS.buf[7]= 0x00;  //not used, but set to zero just in case.
+  CAN_msg_CLT_TPS.buf[0] = 0x11;  // Multiplexed Information
+  CAN_msg_CLT_TPS.buf[2] = 0xB2;  // CLT temp
+  CAN_msg_CLT_TPS.buf[3] = 0x00;  // Baro
+  CAN_msg_CLT_TPS.buf[4] = 0x08;  // bitfield, Bit0 = 0 = Clutch released, Bit 3 = 1 = engine running
+  CAN_msg_CLT_TPS.buf[6] = 0x00;  // TPS_VIRT_CRU_CAN (Not used)
+  CAN_msg_CLT_TPS.buf[7] = 0x00;  // not used, but set to zero just in case
 
   // Start with sensible values for some of these variables.
   CLT = 60;
@@ -486,18 +540,29 @@ void setup(){
   acBitfield2 = 0;
   eFanBitfield = 0;
 
-  xTaskCreatePinnedToCore(looptask, "looptask", 40960, NULL, 1, NULL, 1);
-  Serial.print("Task działa - Free heap: "); Serial.println(ESP.getFreeHeap());
+  // Configure Task Watchdog Timer - disabled for now to avoid issues
+  // esp_task_wdt_config_t twdt_config = {
+  //   .timeout_ms = 30000, // 30 second timeout
+  //   .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Bitmask of all cores
+  //   .trigger_panic = true // Enable panic
+  // };
+  // esp_task_wdt_init(&twdt_config);
+  // esp_task_wdt_add(NULL); // Add current task to WDT
 
-  Serial.println ("Version date: 30.08.2025"); 
+  xTaskCreatePinnedToCore(mainTask, "MainTask", 40960, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(canTask, "CANTask", 10240, NULL, 1, NULL, 1);
+  Serial.print("Tasks created - Free heap: "); Serial.println(ESP.getFreeHeap());
+
+  Serial.println("Version date: 30.08.2025"); 
   doRequest = true; 
 
   rRequestCounter = SerialUpdateRate;
 }
-// ===============================
+// ====== END SETUP FUNCTION ======
 
-// Main can reading function
+// ====== CAN MESSAGE READING FUNCTIONS ======
 void readCanMessage() {
+  DEBUG_PRINTLN("READ CAN DATA");
   if (CAN.parsePacket()) {
     CAN_inMsg.id = CAN.packetId();
     CAN_inMsg.len = CAN.packetDlc();
@@ -543,7 +608,8 @@ void readCanMessage() {
     }
   }
 }
-//================================
+
+// ====== SPEEDUINO DATA EXCHANGE FUNCTIONS ======
 
 // This function sends the requested data back to speeduino when it requests it
 void SendDataToSpeeduino(){
@@ -590,25 +656,26 @@ void SendDataToSpeeduino(){
     default:
       Serial1.write(0);                        // send 0 to confirm cmd received but not valid
       Serial1.write(canin_channel);            // destination channel
-      for (int i=0; i<8; i++) { Serial1.write(0); }                // we need to still write some crap as an response, or real time data reading will slow down significantly
-      Serial.print ("Wrong CAN address");
+      for (int i=0; i<8; i++) { Serial1.write(0); }  // we need to still write some data as a response, or real time data reading will slow down significantly
     break;
   }
 }
-//================================
 
-// display the needed values in serial monitor for debugging
+// ====== DATA PROCESSING FUNCTIONS ======
+
+// Display the needed values in serial monitor for debugging
 void displayData(){
-  Serial.print ("RPM-"); Serial.print (currentStatus.RPM); Serial.print("\t");
-  Serial.print ("PW-"); Serial.print (currentStatus.PW1); Serial.print("\t");
-  Serial.print ("CLT-"); Serial.print (currentStatus.CLT -40); Serial.print("\t");
-  Serial.print ("TPS-"); Serial.print (currentStatus.TPS); Serial.println("\t");
-
+  DEBUG_PRINT("RPM-"); DEBUG_PRINT(currentStatus.RPM); DEBUG_PRINT("\t");
+  DEBUG_PRINT("PW-"); DEBUG_PRINT(currentStatus.PW1); DEBUG_PRINT("\t");
+  DEBUG_PRINT("CLT-"); DEBUG_PRINT(currentStatus.CLT - 40); DEBUG_PRINT("\t");
+  DEBUG_PRINT("TPS-"); DEBUG_PRINT(currentStatus.TPS); DEBUG_PRINT("\t");
 }
-//================================,,,,,,,,,,,,,,,,,,,,,,,
+
+// ====== SPEEDUINO MESSAGE HANDLERS ======
 
 // This function processes the data received from speeduino and converts it to usable format
-void processData(){   // necessary conversion for the data before sending to CAN BUS
+void processData(){
+  DEBUG_PRINTLN("PROCESS DATA FROM SPEEDUINO");
   unsigned int tempRPM;
   data_error = false; // set the received data as ok
 
@@ -665,8 +732,8 @@ void processData(){   // necessary conversion for the data before sending to CAN
   currentStatus.CANin_16 = ((SpeedyResponse [71] << 8) | (SpeedyResponse [71]));
   currentStatus.tpsADC = SpeedyResponse[73];
 
-  // check if received values makes sense and convert those if all is ok.
-  if (currentStatus.RPM < 8000 && data_error == false)  // the engine will not probaply rev over 8000 RPM
+  // Check if received values make sense and convert those if all is ok.
+  if (currentStatus.RPM < 8000 && data_error == false)  // the engine will not probably rev over 8000 RPM
   {
     tempRPM = currentStatus.RPM * 6.4; // RPM conversion factor for e46/e39 cluster
     rpmMSB = tempRPM >> 8;  // split to high and low byte
@@ -674,18 +741,16 @@ void processData(){   // necessary conversion for the data before sending to CAN
   }
   else
   {
-    data_error = true; // data received is probaply corrupted, don't use it.
-    Serial.print ("Error. RPM Received:"); Serial.print (currentStatus.RPM); Serial.print("\t");
+    data_error = true; // data received is probably corrupted, don't use it.
   }
-  if (currentStatus.CLT < 182 && data_error == false)  // 142 degrees Celcius is the hottest temp that fits to the conversion. 
+  if (currentStatus.CLT < 182 && data_error == false)  // 142 degrees Celsius is the hottest temp that fits to the conversion. 
   {
-    CLT = (currentStatus.CLT -40)*4/3+64;  // CLT conversion factor for e46/e39 cluster
+    CLT = (currentStatus.CLT - 40) * 4 / 3 + 64;  // CLT conversion factor for e46/e39 cluster
     handleHotBlink(currentStatus.CLT);
   }
   else
   {
-    data_error = true;  // data received is probaply corrupted, don't use it.
-    Serial.print ("Error. CLT received:"); Serial.print (currentStatus.CLT); Serial.print("\t");
+    data_error = true;  // data received is probably corrupted, don't use it.
   }
 
   if (currentStatus.TPS < 201 && data_error == false)  // TPS values can only be from 0-200 (previously this was from 0-100 on speeduino)
@@ -695,22 +760,22 @@ void processData(){   // necessary conversion for the data before sending to CAN
   }
   else
   {
-    data_error = true; // data received is probaply corrupted, don't use it.
-    Serial.print ("Error. TPS received:"); Serial.print (currentStatus.TPS); Serial.print("\t");
+    data_error = true; // data received is probably corrupted, don't use it.
   }
 }
-//================================
+
+// ====== SERIAL MESSAGE HANDLING ======
 
 // Handle A-message from speeduino. This contains real time data.
 void HandleA()
-{
-  Serial1.print ("A");
+{ 
+  DEBUG_PRINTLN("HANDLE A");
+  Serial1.print("A");
   data_error = false;
   for (int i=0; i<75; i++) {
     SpeedyResponse[i] = Serial1.read();
-    }
+  }
   processData();                  // do the necessary processing for received data
-  //displayData();                  // only required for debugging
   doRequest = true;               // restart data reading
   oldtime = millis();             // zero the timeout
   SerialState = NOTHING_RECEIVED; // all done. We set state for reading what's next message.
@@ -720,21 +785,21 @@ void HandleA()
 // Handle R-message from speeduino. This is a request for some data.
 void HandleR()
 {
-  Serial1.println ("R");
+  Serial1.println("R");
   byte tmp0;
   byte tmp1;
   canin_channel = Serial1.read();
   tmp0 = Serial1.read();  // read in lsb of source can address
   tmp1 = Serial1.read();  // read in msb of source can address
-  CanAddress = tmp1<<8 | tmp0 ;
+  CanAddress = tmp1<<8 | tmp0;
   SendDataToSpeeduino();  // send the data to speeduino
   SerialState = NOTHING_RECEIVED; // all done. We set state for reading what's next message.
 }
-//================================
 
 // Read the first byte from serial to determine what kind of message it is
 void ReadSerial()
 {
+  DEBUG_PRINTLN("READ SERIAL");
   currentCommand = Serial1.read();
   switch (currentCommand)
   {
@@ -745,14 +810,16 @@ void ReadSerial()
       SerialState = R_MESSAGE;
     break;
     default:
-      Serial.print ("Not an A or R message ");
-      Serial.println (currentCommand);
+      Serial.print("Not an A or R message. C ");
+      Serial.println(currentCommand);
     break;
   }
 }
-//================================
 
-// Main loop
+// ====== MAIN LOOP ======
+
+// Main loop - suspended as all work is done in FreeRTOS tasks
 void loop() {
+  vTaskDelay(portMAX_DELAY); // Suspend main loop indefinitely
 }
-//================================
+// ====== END MAIN LOOP ======

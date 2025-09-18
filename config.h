@@ -1,10 +1,10 @@
 #pragma once
 
 // ==================== PINS ====================
-#define SERIAL1_RX_PIN 22 // GPIO16 (RX2)
-#define SERIAL1_TX_PIN 23 // GPIO17 (TX2)
-#define CAN_RX_PIN     32 // GPIO4 (CAN RX)
-#define CAN_TX_PIN     26 // GPIO5 (CAN TX)
+#define SERIAL1_RX_PIN 22 // GPIO22 (Serial1 RX)
+#define SERIAL1_TX_PIN 23 // GPIO23 (Serial1 TX)
+#define CAN_RX_PIN     4  // GPIO4 (TWAI/CAN RX) - MCP2551
+#define CAN_TX_PIN     5  // GPIO5 (TWAI/CAN TX) - MCP2551
 // ==================== Serial settings ====================
 #define SERIAL_BAUDRATE 115200  // Baudrate for Serial2 communication with Speeduino
 #define SERIAL_DEBUG_BAUDRATE 115200 // Baudrate for Serial debugging
@@ -39,7 +39,7 @@ inline  const char* DASH_KEYS[MAX_DASH_VALUES] = {
 // Table of start the actual values
 inline  float DASH_VALUES[MAX_DASH_VALUES];
 // ==================== DEBUG ====================
-#define DEBUG_SERIAL 1            // 1 = enable logs in Serial, 0 = disable
+#define DEBUG_SERIAL 0            // 1 = enable logs in Serial, 0 = disable
 
 // Updating dash values
 inline void updateDashValues() {
