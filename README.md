@@ -42,7 +42,7 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 
 - **1x Logic Level Converter (3.3V ↔ 5V)**  
   <img width="877" height="770" src="https://github.com/user-attachments/assets/0d80677b-53cd-4988-9236-8510f23269a1" />  
-  Or use a simple **voltage divider**:  
+  And/or use 2x a simple **voltage divider**:  
   <img width="408" height="151" src="https://github.com/user-attachments/assets/4e58a212-3535-470a-83a7-41f3adcdf146" />
 ---
 
@@ -62,16 +62,20 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 5. Upload code via Arduino IDE.
 6. Enjoy monitoring your Speeduino data on BMW cluster or optional dashboard.
 
+Dont forget to have one ground with MCP2551 ESP32 and Speeduino!
+CTX pin from MCP2551 and TX pin from Speeduino MUST HAVE have voltage divider. For best, fastest and cheapest solution get voltage divider. With cheap level converters sometimes u can get errors from can/arduino or even code will be not work!
+I recomend using logic level converter only to ESP32 <-> ARDUINO MEGA not for MCP2551
+
 ---
 
 ## Example Connection
 
 ```c++
 // ==================== PINS ====================
-#define SERIAL1_RX_PIN 22 // GPIO16 (RX2)
-#define SERIAL1_TX_PIN 23 // GPIO17 (TX2)
-#define CAN_RX_PIN     32 // GPIO4 (CAN RX)
-#define CAN_TX_PIN     26 // GPIO5 (CAN TX)
+#define SERIAL1_RX_PIN 22 // GPIO22 (Serial1 RX)
+#define SERIAL1_TX_PIN 23 // GPIO23 (Serial1 TX)
+#define CAN_RX_PIN     4  // GPIO4 (TWAI/CAN RX) - MCP2551
+#define CAN_TX_PIN     5  // GPIO5 (TWAI/CAN TX) - MCP2551
 // ==================== Serial settings ====================
 #define SERIAL_BAUDRATE 115200  // Baudrate for Serial2 communication with Speeduino
 #define SERIAL_DEBUG_BAUDRATE 115200 // Baudrate for Serial debugging
@@ -83,9 +87,6 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
 // ==================== UPDATE RATE ====================
 #define SerialUpdateRate 30   // 30 Hz rate limit to update secondary serial data from speeduino
 #define ClusterUpdateRate 50  // 50 Hz Frequency for the cars instrument cluster
-
-// ==================== FUEL / INJECTOR ====================
-#define PW_ADJUST 19000           // scaling for fuel consumption calculation
 ```
 
 ---
