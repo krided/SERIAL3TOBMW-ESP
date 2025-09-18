@@ -212,7 +212,20 @@ const uint8_t MAX_TPS_VALUE = 200;           // Maximum TPS value
 void mainTask(void *pvParameters) {
   (void) pvParameters;
   
+  Serial.println("MainTask started");
+  uint32_t loopCounter = 0;
+  uint32_t lastHeartbeat = millis();
+  
   for(;;) {
+    loopCounter++;
+    
+    // Heartbeat every 30 seconds (reduced from 5s to minimize spam)
+    if (millis() - lastHeartbeat > 30000) {
+      Serial.printf("MainTask heartbeat - loops: %lu, free heap: %u\n", loopCounter, ESP.getFreeHeap());
+      lastHeartbeat = millis();
+      loopCounter = 0;
+    }
+    
     if (doRequest) {
       requestData();
     }
@@ -228,22 +241,62 @@ void mainTask(void *pvParameters) {
       case A_MESSAGE:
         if (Serial1.available() >= 74) { 
           HandleA(); 
+        } else {
+          // Timeout protection for incomplete A messages
+          static uint32_t aMessageStartTime = 0;
+          if (aMessageStartTime == 0) {
+            aMessageStartTime = millis();
+          } else if (millis() - aMessageStartTime > 100) { // 100ms timeout
+            SerialState = NOTHING_RECEIVED;
+            aMessageStartTime = 0;
+            Serial.println("A message timeout - resetting state");
+          }
         }
         break;
       case R_MESSAGE:
         if (Serial1.available() >= 3) {  
           HandleR(); 
+        } else {
+          // Timeout protection for incomplete R messages
+          static uint32_t rMessageStartTime = 0;
+          if (rMessageStartTime == 0) {
+            rMessageStartTime = millis();
+          } else if (millis() - rMessageStartTime > 100) { // 100ms timeout
+            SerialState = NOTHING_RECEIVED;
+            rMessageStartTime = 0;
+            Serial.println("R message timeout - resetting state");
+          }
         }
         break;
       case PWM_MESSAGE:
         // Not implemented, add if needed
         break;
       default:
+        SerialState = NOTHING_RECEIVED; // Reset unknown states
         break;
     }
     if ((millis() - oldtime) > SPEEDUINO_TIMEOUT_MS) {
       oldtime = millis();
-      Serial.println("Timeout from speeduino!");
+      static uint32_t timeoutCount = 0;
+      timeoutCount++;
+      
+      Serial.printf("Timeout from speeduino! Count: %lu\n", timeoutCount);
+      
+      // If we have too many timeouts, try to reset communication
+      if (timeoutCount % 10 == 0) { // Every 10th timeout
+        Serial.println("Multiple timeouts detected - resetting Serial1 communication");
+        
+        // Flush both buffers
+        while (Serial1.available()) Serial1.read();
+        Serial1.flush();
+        
+        // Reset state
+        SerialState = NOTHING_RECEIVED;
+        
+        // Small delay before requesting again
+        delay(50);
+      }
+      
       doRequest = true;
     }
     
@@ -266,10 +319,22 @@ void mainTask(void *pvParameters) {
 void canTask(void *pvParameters) {
   (void) pvParameters;
   
+  Serial.println("CANTask started");
   const TickType_t xFrequency = pdMS_TO_TICKS(20); // 20ms = 50Hz
   TickType_t xLastWakeTime = xTaskGetTickCount();
+  uint32_t canLoopCounter = 0;
+  uint32_t lastCanHeartbeat = millis();
   
   for(;;) {
+    canLoopCounter++;
+    
+    // Heartbeat every 60 seconds for CAN task
+    if (millis() - lastCanHeartbeat > 60000) {
+      Serial.printf("CANTask heartbeat - loops: %lu\n", canLoopCounter);
+      lastCanHeartbeat = millis();
+      canLoopCounter = 0;
+    }
+    
     SendData(); // Send CAN messages at 50Hz
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
@@ -279,21 +344,49 @@ void canTask(void *pvParameters) {
 
 // Request data from Speeduino at defined rate
 void requestData() {
-  if (doRequest == true){
+  static uint32_t lastRequestTime = 0;
+  const uint32_t MIN_REQUEST_INTERVAL = 30; // Minimum 30ms between requests (33Hz)
+  
+  if (doRequest == true && (millis() - lastRequestTime >= MIN_REQUEST_INTERVAL)){
+    // Check if Serial1 is ready
+    if (!Serial1) {
+      Serial.println("Serial1 not ready for request");
+      return;
+    }
+    
     Serial1.write("A"); // Send A to request real time data
+    Serial1.flush(); // Ensure the byte is sent immediately
     doRequest = false;
+    lastRequestTime = millis();
+    
+    DEBUG_PRINTLN("Sent A request to Speeduino");
   }
 }
 
 // ====== CAN MESSAGE FUNCTIONS ======
 
-// Helper function to send CAN message
+// Helper function to send CAN message with error checking
 void sendCANMessage(CAN_message_t &msg) {
-  CAN.beginPacket(msg.id);
+  static uint32_t lastCANError = 0;
+  
+  if (!CAN.beginPacket(msg.id)) {
+    if (millis() - lastCANError > 1000) { // Log error only once per second
+      Serial.println("CAN beginPacket failed");
+      lastCANError = millis();
+    }
+    return;
+  }
+  
   for (int i = 0; i < msg.len; i++) {
     CAN.write(msg.buf[i]);
   }
-  CAN.endPacket();
+  
+  if (!CAN.endPacket()) {
+    if (millis() - lastCANError > 1000) { // Log error only once per second
+      Serial.println("CAN endPacket failed");
+      lastCANError = millis();
+    }
+  }
 }
 
 // Send CAN messages at 50Hz rate to BMW cluster
@@ -570,34 +663,52 @@ void setup(){
   acBitfield2 = 0;
   eFanBitfield = 0;
 
-  // Configure Task Watchdog Timer - disabled for now to avoid issues
-  // esp_task_wdt_config_t twdt_config = {
-  //   .timeout_ms = 30000, // 30 second timeout
-  //   .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Bitmask of all cores
-  //   .trigger_panic = true // Enable panic
-  // };
-  // esp_task_wdt_init(&twdt_config);
-  // esp_task_wdt_add(NULL); // Add current task to WDT
-
-  Serial.println("Version date: 30.08.2025"); 
+  // Configure Task Watchdog Timer - enable basic watchdog
+  esp_task_wdt_config_t twdt_config = {
+    .timeout_ms = 10000, // 10 second timeout (increased from 30s)
+    .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Bitmask of all cores
+    .trigger_panic = false // Disable panic to avoid hard resets
+  };
+  esp_task_wdt_init(&twdt_config);
+  
+  Serial.println("Task Watchdog configured");
+  Serial.println("Version date: 18.09.2025 - Fixed blocking issues"); 
   doRequest = true; 
   delay(2000);
   rRequestCounter = SerialUpdateRate;
   xTaskCreatePinnedToCore(mainTask, "MainTask", 40960, NULL, 2, NULL, 1);
   xTaskCreatePinnedToCore(canTask, "CANTask", 10240, NULL, 1, NULL, 1);
+  
+  // Add tasks to watchdog (optional, only if you want to monitor them)
+  // esp_task_wdt_add(NULL); // Add current task to WDT
+  
   Serial.print("Tasks created - Free heap: "); Serial.println(ESP.getFreeHeap());
+  Serial.println("=== System fully initialized ===");
 }
 // ====== END SETUP FUNCTION ======
 
 // ====== CAN MESSAGE READING FUNCTIONS ======
 void readCanMessage() {
   DEBUG_PRINTLN("READ CAN DATA");
-  if (CAN.parsePacket()) {
+  
+  // Add timeout to prevent infinite blocking
+  uint32_t startTime = millis();
+  const uint32_t CAN_READ_TIMEOUT = 10; // 10ms timeout
+  
+  while (CAN.parsePacket() && (millis() - startTime < CAN_READ_TIMEOUT)) {
     CAN_inMsg.id = CAN.packetId();
     CAN_inMsg.len = CAN.packetDlc();
-    for (int i=0; i<CAN_inMsg.len; i++) {
+    
+    // Validate message length
+    if (CAN_inMsg.len > 8) {
+      Serial.println("Invalid CAN message length");
+      continue;
+    }
+    
+    for (int i = 0; i < CAN_inMsg.len; i++) {
       CAN_inMsg.buf[i] = CAN.read();
     }
+    
     switch (CAN_inMsg.id)
     {
       case 0x613:
@@ -642,6 +753,18 @@ void readCanMessage() {
 
 // This function sends the requested data back to speeduino when it requests it
 void SendDataToSpeeduino(){
+  // Add timeout protection
+  static uint32_t lastSendTime = 0;
+  if (millis() - lastSendTime < 10) { // Minimum 10ms between sends
+    return;
+  }
+  lastSendTime = millis();
+  
+  if (!Serial1) {
+    Serial.println("Serial1 not available");
+    return;
+  }
+  
   Serial1.write("G");                      // reply "G" cmd
   switch (CanAddress)
   {
@@ -688,6 +811,7 @@ void SendDataToSpeeduino(){
       for (int i=0; i<8; i++) { Serial1.write(0); }  // we need to still write some data as a response, or real time data reading will slow down significantly
     break;
   }
+  Serial1.flush(); // Ensure data is sent
 }
 
 // ====== DATA PROCESSING FUNCTIONS ======
@@ -707,6 +831,16 @@ void processData(){
   DEBUG_PRINTLN("PROCESS DATA FROM SPEEDUINO");
   unsigned int tempRPM;
   data_error = false; // set the received data as ok
+  static uint32_t corruptedDataCount = 0;
+
+  // Basic sanity check on first few bytes to detect corruption early
+  if (SpeedyResponse[0] > 240 || SpeedyResponse[1] > 240 || SpeedyResponse[2] > 240) {
+    Serial.printf("Data corruption detected in header bytes: %d, %d, %d\n", 
+                  SpeedyResponse[0], SpeedyResponse[1], SpeedyResponse[2]);
+    data_error = true;
+    corruptedDataCount++;
+    return;
+  }
 
   currentStatus.secl = SpeedyResponse[0];
   currentStatus.status1 = SpeedyResponse[1];
@@ -761,6 +895,21 @@ void processData(){
   currentStatus.CANin_16 = ((SpeedyResponse [71] << 8) | (SpeedyResponse [71]));
   currentStatus.tpsADC = SpeedyResponse[73];
 
+  // Additional sanity checks on key values - adjusted for realistic Speeduino values
+  // MAP: 0-500 kPa is normal, IAT: -40 to +100°C, Battery: 0-25.5V (battery10 is voltage*10)
+  if (currentStatus.MAP > 600 || currentStatus.IAT > 200 || currentStatus.battery10 > 255) {
+    Serial.printf("Suspicious data values: MAP=%d, IAT=%d, Bat=%d\n", 
+                  currentStatus.MAP, currentStatus.IAT, currentStatus.battery10);
+    data_error = true;
+    corruptedDataCount++;
+    return;
+  }
+
+  // Report corruption statistics periodically
+  if (corruptedDataCount > 0 && corruptedDataCount % 10 == 0) {
+    Serial.printf("Total corrupted data packets: %lu\n", corruptedDataCount);
+  }
+
   // Check if received values make sense and convert those if all is ok.
   if (currentStatus.RPM < MAX_ENGINE_RPM && data_error == false)  // the engine will not probably rev over 8000 RPM
   {
@@ -799,11 +948,37 @@ void processData(){
 void HandleA()
 { 
   DEBUG_PRINTLN("HANDLE A");
+  
+  // Add timeout protection for reading serial data
+  uint32_t startTime = millis();
+  const uint32_t SERIAL_READ_TIMEOUT = 100; // 100ms timeout
+  static uint32_t successfulReads = 0;
+  
   Serial1.print("A");
   data_error = false;
-  for (int i=0; i<75; i++) {
+  
+  for (int i = 0; i < 75; i++) {
+    uint32_t waitStart = millis();
+    while (!Serial1.available()) {
+      if (millis() - startTime > SERIAL_READ_TIMEOUT) {
+        Serial.printf("Serial read timeout in HandleA at byte %d (waited %lums)\n", i, millis() - waitStart);
+        data_error = true;
+        SerialState = NOTHING_RECEIVED;
+        
+        // Flush remaining data to prevent desync
+        while (Serial1.available()) Serial1.read();
+        return;
+      }
+      yield(); // Allow other tasks to run
+    }
     SpeedyResponse[i] = Serial1.read();
   }
+  
+  successfulReads++;
+  if (successfulReads % 1000 == 0) { // Log every 1000 successful reads (reduced from 100)
+    Serial.printf("HandleA: %lu successful reads completed\n", successfulReads);
+  }
+  
   processData();                  // do the necessary processing for received data
   doRequest = true;               // restart data reading
   oldtime = millis();             // zero the timeout
@@ -815,11 +990,45 @@ void HandleA()
 void HandleR()
 {
   Serial1.println("R");
+  
+  // Add timeout protection for reading serial data
+  uint32_t startTime = millis();
+  const uint32_t SERIAL_READ_TIMEOUT = 100; // 100ms timeout
+  
   byte tmp0;
   byte tmp1;
+  
+  // Read with timeout protection
+  while (!Serial1.available()) {
+    if (millis() - startTime > SERIAL_READ_TIMEOUT) {
+      Serial.println("Serial read timeout in HandleR - channel");
+      SerialState = NOTHING_RECEIVED;
+      return;
+    }
+    yield();
+  }
   canin_channel = Serial1.read();
+  
+  while (!Serial1.available()) {
+    if (millis() - startTime > SERIAL_READ_TIMEOUT) {
+      Serial.println("Serial read timeout in HandleR - tmp0");
+      SerialState = NOTHING_RECEIVED;
+      return;
+    }
+    yield();
+  }
   tmp0 = Serial1.read();  // read in lsb of source can address
+  
+  while (!Serial1.available()) {
+    if (millis() - startTime > SERIAL_READ_TIMEOUT) {
+      Serial.println("Serial read timeout in HandleR - tmp1");
+      SerialState = NOTHING_RECEIVED;
+      return;
+    }
+    yield();
+  }
   tmp1 = Serial1.read();  // read in msb of source can address
+  
   CanAddress = tmp1<<8 | tmp0;
   SendDataToSpeeduino();  // send the data to speeduino
   SerialState = NOTHING_RECEIVED; // all done. We set state for reading what's next message.
@@ -829,18 +1038,42 @@ void HandleR()
 void ReadSerial()
 {
   DEBUG_PRINTLN("READ SERIAL");
+  static uint32_t invalidMessageCount = 0;
+  static uint32_t lastFlushTime = 0;
+  
   currentCommand = Serial1.read();
   switch (currentCommand)
   {
     case 'A':  // Speeduino sends data in A-message
       SerialState = A_MESSAGE;
+      invalidMessageCount = 0; // Reset counter on valid message
     break;
     case 'R':  // Speeduino requests data in R-message
       SerialState = R_MESSAGE;
+      invalidMessageCount = 0; // Reset counter on valid message
     break;
     default:
-      Serial.print("Not an A or R message. C ");
-      Serial.println(currentCommand);
+      invalidMessageCount++;
+      Serial.printf("Invalid message #%lu: C %d (0x%02X)\n", invalidMessageCount, currentCommand, currentCommand);
+      
+      // If we get too many invalid messages in a row, flush the buffer to resync
+      if (invalidMessageCount >= 5 || (millis() - lastFlushTime > 1000)) {
+        Serial.println("Flushing Serial1 buffer to resync communication");
+        
+        // Flush input buffer
+        while (Serial1.available()) {
+          Serial1.read();
+          delay(1); // Small delay to ensure we read everything
+        }
+        
+        SerialState = NOTHING_RECEIVED;
+        invalidMessageCount = 0;
+        lastFlushTime = millis();
+        
+        // Force a new request after buffer flush
+        doRequest = true;
+        oldtime = millis();
+      }
     break;
   }
 }
