@@ -1,7 +1,7 @@
 // ESP32 version of Serial3toBMWcan using MCP_CAN library
 // This code reads real time data from Speeduino EFI using serial connection and converts that to CAN messages for BMW e39/e46 instrument clusters
 // Hardware: ESP32 WROOM with MCP2515 CAN controller
-// Converted from STM32 version by pazi88
+// Converted and edited from STM32 version by pazi88
 
 //THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 //IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -15,46 +15,7 @@
 #include <mcp_can.h>
 #include <HardwareSerial.h>
 #include <Ticker.h>
-
-// Pin definitions for ESP32
-#define SERIAL1_RX_PIN 22 // GPIO22 (Serial1 RX)
-#define SERIAL1_TX_PIN 23 // GPIO23 (Serial1 TX)
-
-// ==================== TEMPERATURE LIGHT ====================
-#define HOT_TEMP_BLINK 100    // Set temperature for overheat light to start blinking
-#define HOT_TEMP_SOLID 120    // Set temperature for overheat light to stay solid
-#define BLINKING 1            // 1 = enable blinking, 0 = solid light only
-
-// MCP2515 SPI pins
-#define MCP2515_CS_PIN   5  // GPIO5 (SPI CS)
-#define MCP2515_INT_PIN  4  // GPIO4 (MCP2515 INT)
-#define MCP2515_MOSI_PIN 21 // GPIO21 (SPI MOSI) - custom pin to avoid conflict with Serial1
-#define MCP2515_MISO_PIN 19 // GPIO19 (SPI MISO)
-#define MCP2515_SCK_PIN  18 // GPIO18 (SPI SCK)
-
-//Bitsetting macros
-#define BIT_SET(a,b) ((a) |= (1U<<(b)))
-#define BIT_CLEAR(a,b) ((a) &= ~(1U<<(b)))
-#define BIT_CHECK(var,pos) !!((var) & (1U<<(pos)))
-#define BIT_TOGGLE(var,pos) ((var)^= 1UL << (pos))
-#define BIT_WRITE(var, pos, bitvalue) ((bitvalue) ? BIT_SET((var), (pos)) : bitClear((var), (pos)))
-
-#define NOTHING_RECEIVED        0
-#define R_MESSAGE               1
-#define A_MESSAGE               2
-#define PWM_MESSAGE             3
-
-//Stock M52TU injectors scaling. Adjust this to trim fuel consumption. (injector size affects this)
-//Bosch 0280155831 19000
-#define PW_ADJUST           25000
-
-#define SerialUpdateRate 30   // 30 Hz rate limit to update secondary serial data from speeduino
-#define PWMFanFrequency 100   // 100 Hz Frequency for the BMW PWM fan
-#define ClusterUpdateRate 50  // 50 Hz Frequency for the cars instrument cluster
-
-#define BIT_LV_REQ_TCO_L       5  // Request For Lowering Cooling Temp (c_tco_bol_ect)
-#define BIT_LV_ACCIN           6  // Air Conditioning Compressor Status (0=off, 1=on)
-#define BIT_LV_ACIN            7  // Air Conditioning Request (0=off, 1=on)
+#include "Config.h"
 
 // MCP_CAN instance
 MCP_CAN CAN(MCP2515_CS_PIN);
@@ -165,7 +126,18 @@ unsigned char CAN_msg_RPM[8];
 unsigned char CAN_msg_CLT_TPS[8];
 unsigned char CAN_msg_MPG_CEL[8];
 
-// Timer interrupt functions
+// ================== INJECTOR SCALING ==========================
+int PW_ADJUST = BASE_PW;  // default value
+void calcPWAdjust() {
+  if (FLOW_CC <= 0) {
+    PW_ADJUST = 0;  // safety
+  } else {
+    PW_ADJUST = (int)((long)BASE_PW * BASE_FLOW / FLOW_CC);
+  }
+}
+// ==============================================================
+
+// ================= Timer interrupt functions ==================
 void onRequestTimer() {
   if (doRequest){
     SpeeduinoSerial.write("A"); // Send A to request real time data
@@ -187,7 +159,25 @@ void onRequestTimer() {
     rRequestCounter++;
   }
 }
+// ==============================================================
 
+// ================ Additional Functions ========================
+/*
+IF U WANT ADD FUNCTIONS, PUT THEM HERE AND CALL IT ON processData()
+Always take currentStatus.your_variable to get the value from speeduino.
+like this:
+
+processData(){
+...
+  if (currentStatus.spark == 5) {
+    handleCelLamp();
+  }
+...
+}
+That code will light the CEL lamp if there is an error in the spark bitfield.
+*/
+
+// Handle overheat light blinking based on coolant temperature
 void handleHotBlink(uint8_t temp) {
   int16_t correctedTemp = temp - CLT_TEMP_OFFSET;
   static uint32_t lastBlink = 0;
@@ -210,7 +200,69 @@ void handleHotBlink(uint8_t temp) {
     tempLight = 0x0; // off
   }
 }
+//---------------------------------------------------------------
+// Check  3 seconds CEL light timer and turn off the light if needed
+void handleCelLamp() {
+  static bool celActive = false;
+  static uint32_t celStartTime = 0;
 
+  if (!celActive) {
+    // Call to light the lamp
+    celActive = true;
+    celStartTime = millis();
+    CAN_msg_MPG_CEL.buf[0] = 0x02; // light the lamp
+  } else {
+    // Check in loop if 3 seconds have passed
+    if (millis() - celStartTime >= 3000) {
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // turn off the lamp
+      celActive = false;
+    }
+  }
+}
+// ---------------------------------------------------------------
+
+// Check  3 seconds EML and CEL light timer and turn off the light if needed
+void handleCelELMLamp() {
+  static bool celActive = false;
+  static uint32_t celStartTime = 0;
+
+  if (!celActive) {
+    // Call to light the lamp
+    celActive = true;
+    celStartTime = millis();
+    CAN_msg_MPG_CEL.buf[0] = 0x12; // light the lamp
+  } else {
+    // Check in loop if 3 seconds have passed
+    if (millis() - celStartTime >= 3000) {
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // turn off the lamp
+      celActive = false;
+    }
+  }
+}
+// ---------------------------------------------------------------
+
+// Check  3 seconds EML light timer and turn off the light if needed
+void handleEMLLamp() {
+  static bool celActive = false;
+  static uint32_t celStartTime = 0;
+
+  if (!celActive) {
+    // Call to light the lamp
+    celActive = true;
+    celStartTime = millis();
+    CAN_msg_MPG_CEL.buf[0] = 0x10; // light the lamp
+  } else {
+    // Check in loop if 3 seconds have passed
+    if (millis() - celStartTime >= 3000) {
+      CAN_msg_MPG_CEL.buf[0] = 0x00; // turn off the lamp
+      celActive = false;
+    }
+  }
+}
+//---------------------------------------------------------------
+// ==============================================================
+
+// ================ CAN send and receive functions ==============
 void onSendTimer() {
   // Send CAN messages in 50Hz phase from timer interrupt. This is important to be high enough Hz rate to make cluster work smoothly.
   if (ascMSG) {
@@ -303,14 +355,20 @@ void readCanMessage(unsigned long canId, unsigned char len, unsigned char *buf) 
     case 0x613:
       odometerLSB = buf[0];
       odometerMSB = buf[1];
-      //Serial.print ("Odometer: "); Serial.println (odometerLSB + (odometerMSB << 8));
+      #if DEBUG
+      Serial.print ("Odometer: "); Serial.println (odometerLSB + (odometerMSB << 8));
+      #endif
       FuelLevel = buf[2];
-      //Serial.print ("Fuel level: "); Serial.println (FuelLevel);
+      #if DEBUG
+      Serial.print ("Fuel level: "); Serial.println (FuelLevel);
+      #endif
       runningClock = ((buf[4] << 8) | (buf[3]));
     break;
     case 0x615:
       ambientTemp = buf[3];
-      //Serial.print ("Outside temp: "); Serial.println (ambientTemp);
+      #if DEBUG
+      Serial.print ("Outside temp: "); Serial.println (ambientTemp);
+      #endif
       acBitfield = buf[0];
       acBitfield2 = buf[4];
       eFanBitfield = buf[1];
@@ -402,16 +460,19 @@ void SendDataToSpeeduino(){
     break;
   }
 }
+// ==============================================================
 
-// display the needed values in serial monitor for debugging
+// ==================== Debug Data ============================
 void displayData(){
   Serial.print ("RPM-"); Serial.print (currentStatus.RPM); Serial.print("\t");
   Serial.print ("PW-"); Serial.print (currentStatus.PW1); Serial.print("\t");
   Serial.print ("PWcount-"); Serial.print (PWcount); Serial.print("\t");
-  Serial.print ("CLT-"); Serial.print (CLT); Serial.print("\t");
+  Serial.print ("CLT-"); Serial.print (CLT - 40); Serial.print("\t");
   Serial.print ("TPS-"); Serial.print (TPS); Serial.println("\t");
 }
+// ==============================================================
 
+// ================ Data processing function ===================
 void processData(){   // necessary conversion for the data before sending to CAN BUS
   unsigned int tempRPM;
   data_error = false; // set the received data as ok
@@ -512,7 +573,9 @@ void HandleA()
     SpeedyResponse[i] = SpeeduinoSerial.read();
     }
   processData();                  // do the necessary processing for received data
-  //displayData();                  // only required for debugging
+  #if DEBUG
+    displayData();                  // only required for debugging
+  #endif
   doRequest = true;               // restart data reading
   oldtime = millis();             // zero the timeout
   SerialState = NOTHING_RECEIVED; // all done. We set state for reading what's next message.
@@ -574,13 +637,15 @@ void ReadSerial()
     break;
   }
 }
+// ==============================================================
 
+// ==================== Setup and Loop ===========================
 void setup(){
   
   // Initialize Serial for debugging
   Serial.begin(115200);
   Serial.println("ESP32 BMW CAN Bridge starting...");
-  
+  calcPWAdjust();
   // Configure custom SPI pins for MCP2515
   SPI.begin(MCP2515_SCK_PIN, MCP2515_MISO_PIN, MCP2515_MOSI_PIN, MCP2515_CS_PIN);
   
@@ -651,13 +716,12 @@ void setup(){
   eFanBitfield = 0;
 
   // Setup ESP32 periodic tasks using Ticker
-  requestTicker.attach(1.0 / SerialUpdateRate, onRequestTimer); // 30Hz
-  sendTicker.attach(1.0 / ClusterUpdateRate, onSendTimer);      // 50Hz
+  requestTicker.attach(1.0 / SerialUpdateRate, onRequestTimer); 
+  sendTicker.attach(1.0 / ClusterUpdateRate, onSendTimer);
 
   Serial.println ("Version date: 20.8.2025 - ESP32 Version with MCP_CAN"); // To see from debug serial when is used code created.
   doRequest = true; // all set. Start requesting data from speeduino
   rRequestCounter = SerialUpdateRate;
-  
   Serial.println("ESP32 BMW CAN Bridge initialized successfully!");
 }
 
@@ -696,3 +760,4 @@ void loop() {
     readCanMessage(canId, len, buf);
   }
 }
+// ===============================================================
