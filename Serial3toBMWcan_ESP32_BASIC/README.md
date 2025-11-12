@@ -46,7 +46,6 @@ This project reads real-time data from the **Speeduino EFI system** via UART and
   <img width="727" height="508" src="https://github.com/user-attachments/assets/15ae8512-49b9-4f0c-8aec-2b2c67a8fb51" />
 
 - **MCP2515 CAN transceiver**
-  <img width="1000" height="1000" src="https://github.com/user-attachments/assets/cb113db2-60f7-4216-8dc7-466d4a989312" />
 
 - **Logic level converter (3.3V ↔ 5V)**
   <img width="877" height="770" src="https://github.com/user-attachments/assets/0d80677b-53cd-4988-9236-8510f23269a1" />
